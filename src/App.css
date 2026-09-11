@@ -1671,12 +1671,39 @@ button {
 
 .onboarding-language-grid select {
   width: 100%;
-  min-height: 38px;
+  height: 42px;
+  padding: 0 42px 0 13px;
   border: 1px solid rgba(32, 33, 35, 0.12);
-  border-radius: 10px;
-  background: #ffffff;
+  border-radius: 11px;
+  appearance: none;
+  background:
+    linear-gradient(45deg, transparent 50%, #74777d 50%) calc(100% - 20px) 18px / 6px 6px no-repeat,
+    linear-gradient(135deg, #74777d 50%, transparent 50%) calc(100% - 16px) 18px / 6px 6px no-repeat,
+    linear-gradient(180deg, #ffffff, #fbfbfa);
   color: #202123;
   font-size: 14px;
+  font-weight: 500;
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 1px 2px rgba(32, 33, 35, 0.04);
+  cursor: pointer;
+}
+
+.onboarding-language-grid select:hover {
+  border-color: rgba(73, 103, 242, 0.28);
+  background:
+    linear-gradient(45deg, transparent 50%, #4f6df5 50%) calc(100% - 20px) 18px / 6px 6px no-repeat,
+    linear-gradient(135deg, #4f6df5 50%, transparent 50%) calc(100% - 16px) 18px / 6px 6px no-repeat,
+    linear-gradient(180deg, #ffffff, #fbfbfa);
+}
+
+.onboarding-language-grid select:focus-visible {
+  border-color: rgba(73, 103, 242, 0.55);
+  box-shadow: 0 0 0 3px rgba(73, 103, 242, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.onboarding-language-grid select:disabled {
+  cursor: default;
+  opacity: 0.68;
 }
 
 .onboarding-model-grid {

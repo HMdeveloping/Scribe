@@ -276,7 +276,8 @@ function App() {
       console.error("Scribe: unable to check for updates", reason);
       setUpdateStatus("error");
       setUpdateError(t("couldntCheckForUpdates"));
-      if (!silent) setUpdateDialogOpen(true);
+      if (silent) return;
+      setUpdateDialogOpen(true);
     }
   }, [t]);
 
@@ -1242,7 +1243,7 @@ function App() {
                     : updateStatus === "ready"
                       ? t("updateReadyCopy")
                       : updateStatus === "error"
-                        ? updateError
+                        ? updateError === t("couldntCheckForUpdates") ? t("updateCheckFailedCopy") : updateError
                         : updateStatus === "up-to-date"
                           ? t("secureUpdates")
                         : updateDetails?.body || t("updateAvailableCopy")}

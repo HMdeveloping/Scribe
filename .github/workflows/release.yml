@@ -32,7 +32,7 @@ jobs:
           - name: macOS Apple Silicon
             runner: macos-15
             target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin --bundles dmg"
+            args: "--target aarch64-apple-darwin --bundles app,dmg"
             alias: Scribe-macOS.dmg
             aliasGlob: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             artifactName: Scribe-macOS-dry-run
