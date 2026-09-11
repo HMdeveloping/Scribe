@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { TranslationKey } from "../i18n";
 
 const BAR_COUNT = 40;
 const ANALYSER_INTERVAL_MS = 1000 / 30;
@@ -13,7 +14,7 @@ const NEIGHBOR_BLEND = 0.18;
 export function useMicrophoneLevel(paused: boolean) {
   const [levels, setLevels] = useState<number[]>(() => Array(BAR_COUNT).fill(0));
   const [status, setStatus] = useState<"requesting" | "active" | "error">("requesting");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<TranslationKey | "">("");
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
   const pausedRef = useRef(paused);
   const stopRef = useRef<() => void>(() => {});
@@ -48,9 +49,9 @@ export function useMicrophoneLevel(paused: boolean) {
     }
     stopRef.current = stop;
 
-    function fail(message: string) {
+    function fail(messageKey: TranslationKey) {
       if (disposed) return;
-      setError(message);
+      setError(messageKey);
       setStatus("error");
       setLevels(Array(BAR_COUNT).fill(0));
       stop();
@@ -68,7 +69,7 @@ export function useMicrophoneLevel(paused: boolean) {
             origin: window.location.origin,
             isSecureContext: window.isSecureContext,
           });
-          fail("Microphone access is unavailable.");
+          fail("microphoneUnavailableDetail");
           return;
         }
         const acquired = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -79,7 +80,7 @@ export function useMicrophoneLevel(paused: boolean) {
         stream = acquired;
         setMediaStream(acquired);
         stream.getAudioTracks().forEach((track) => {
-          track.onended = () => fail("Microphone disconnected. Start a new recording to reconnect.");
+          track.onended = () => fail("microphoneDisconnectedDetail");
         });
         context = new AudioContext();
         analyser = context.createAnalyser();
@@ -141,8 +142,8 @@ export function useMicrophoneLevel(paused: boolean) {
         if (import.meta.env.DEV) console.error("Scribe: microphone initialization failed", reason);
         const name = reason instanceof DOMException ? reason.name : "";
         fail(name === "NotAllowedError" || name === "SecurityError"
-          ? "Microphone access was denied. Enable microphone access for Scribe in System Settings."
-          : "Unable to access the microphone.");
+          ? "microphonePermissionDetail"
+          : "microphoneError");
       }
     }
     void start();

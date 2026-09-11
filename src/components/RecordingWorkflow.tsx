@@ -49,11 +49,18 @@ export type TranscriptData = {
 
 type SaveRecordingResult = {
   id: string;
+  details: {
+    recording: RecordingMetadata;
+    projectId: string | null;
+    projectName: string | null;
+    transcriptStatus: string;
+    transcript: TranscriptData | null;
+  };
 };
 
 type RecordingPhase = "recording" | "paused" | "stopping" | "save-error" | "discarding";
 
-export function RecordingView({ onStop, onDiscard, t, projectId }: { onStop: (metadata: RecordingMetadata) => void; onDiscard: () => void; t: TFunction; projectId?: string | null }) {
+export function RecordingView({ onStop, onSaved, onDiscard, t, projectId }: { onStop: (metadata: RecordingMetadata) => void; onSaved: (details: SaveRecordingResult["details"]) => void; onDiscard: () => void; t: TFunction; projectId?: string | null }) {
   const [phase, setPhase] = useState<RecordingPhase>("recording");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [pendingSave, setPendingSave] = useState<{ blob: Blob; metadata: RecordingMetadata } | null>(null);
@@ -151,6 +158,7 @@ export function RecordingView({ onStop, onDiscard, t, projectId }: { onStop: (me
       });
       console.info("[recording-save] invoke success", result);
       console.info("Scribe: saved recording", result);
+      onSaved(result.details);
     } catch (reason) {
       console.error("[recording-save] invoke error", reason);
       console.error("Scribe: Tauri save_recording failed", {
@@ -180,7 +188,7 @@ export function RecordingView({ onStop, onDiscard, t, projectId }: { onStop: (me
       const metadata: RecordingMetadata = {
         version: 1,
         id: crypto.randomUUID(),
-        title: "New recording",
+        title: t("newRecordingTitle"),
         createdAt: new Date().toISOString(),
         durationSeconds: Math.max(0, Math.round(finalElapsedMs / 1000)),
         language: "sl",
@@ -232,10 +240,10 @@ export function RecordingView({ onStop, onDiscard, t, projectId }: { onStop: (me
   }
 
   return (
-    <section className={`recording-view${isPaused ? " is-paused" : ""}`} aria-label="Recording">
+    <section className={`recording-view${isPaused ? " is-paused" : ""}`} aria-label={t("recording")}>
       <header>
         <h1 className="recording-label">{t("recording")}</h1>
-        <div className="recording-timer" role="timer" aria-label="Elapsed time">{formatDuration(elapsedMs)}</div>
+        <div className="recording-timer" role="timer" aria-label={t("elapsedTime")}>{formatDuration(elapsedMs)}</div>
       </header>
       <div className="waveform" aria-hidden="true">
         {microphone.levels.map((level, index) => (
@@ -248,7 +256,7 @@ export function RecordingView({ onStop, onDiscard, t, projectId }: { onStop: (me
         <span />{isSaveError ? t("saveFailed")
           : recorder.status === "error" ? t("recorderError")
           : isStopping ? t("savingRecording")
-          : microphone.status === "error" ? t("microphoneError")
+          : microphone.status === "error" ? t(microphone.error || "microphoneError")
           : microphone.status === "requesting" ? t("waitingMic")
           : isPaused ? t("paused") : t("listening")}
       </p>
@@ -306,13 +314,14 @@ export function RecordingView({ onStop, onDiscard, t, projectId }: { onStop: (me
 }
 
 type FinalizingViewProps = {
-  errorKind?: "model_missing" | "model_downloading" | "ffmpeg_missing" | "whisper_missing" | "transcription";
+  errorKind?: "model_missing" | "model_downloading" | "model_ready" | "ffmpeg_missing" | "whisper_missing" | "audio_missing" | "conversion_failed" | "transcript_unavailable" | "transcription";
   errorMessage?: string;
   progress?: TranscriptionProgress | null;
   t: TFunction;
   onRetry: () => void;
   onContinue: () => void;
   onOpenTranscriptionSettings: () => void;
+  retryDisabled?: boolean;
 };
 
 export type TranscriptionProgress = {
@@ -343,12 +352,14 @@ function formatProgressBytes(bytes: number) {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
-export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, onContinue, onOpenTranscriptionSettings }: FinalizingViewProps) {
+export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, onContinue, onOpenTranscriptionSettings, retryDisabled = false }: FinalizingViewProps) {
   if (errorKind) {
     const title = errorKind === "model_missing"
       ? t("transcriptionModelNotInstalledTitle")
       : errorKind === "model_downloading"
         ? t("transcriptionModelDownloadingTitle")
+        : errorKind === "model_ready"
+          ? t("transcriptionModelReadyTitle")
       : errorKind === "ffmpeg_missing"
         ? t("ffmpegUnavailable")
         : errorKind === "whisper_missing"
@@ -358,6 +369,8 @@ export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, 
       ? t("transcriptionModelNotInstalledCopy")
       : errorKind === "model_downloading"
         ? errorMessage ?? t("modelDownloadingFriendly")
+      : errorKind === "model_ready"
+        ? t("transcriptionModelReadyCopy")
       : errorKind === "ffmpeg_missing"
         ? t("installFfmpeg")
         : errorKind === "whisper_missing"
@@ -371,7 +384,7 @@ export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, 
         {errorKind === "model_missing" ? (
           <button className="pause-control" onClick={onOpenTranscriptionSettings}>{t("openTranscriptionSettings")}</button>
         ) : (
-          <button className="pause-control" onClick={onRetry}>{t("retryTranscription")}</button>
+          <button className="pause-control" onClick={onRetry} disabled={retryDisabled}>{t("retryTranscription")}</button>
         )}
         <button className="stop-control" onClick={onContinue}>{t("continueWithoutTranscript")}</button>
       </div>
@@ -791,7 +804,7 @@ export function TranscriptView({
           {projectName ? <><span aria-hidden="true">·</span> {projectName}</> : null}
         </p>
       </header>
-      <div className="transcript-tabs" aria-label="Recording content">
+      <div className="transcript-tabs" aria-label={t("recordingContent")}>
         {tabs.map((item) => (
           <button key={item.id} aria-pressed={tab === item.id} onClick={() => setTab(item.id)}>
             {item.label}

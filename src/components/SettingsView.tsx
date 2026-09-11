@@ -235,13 +235,13 @@ export function SettingsView({
   const selectedModelCopy = selectedModel ? localizedModel(selectedModel, t) : null;
 
   return (
-    <section className="settings-view" aria-label="Settings">
+    <section className="settings-view" aria-label={t("settings")}>
       <header>
         <h1>{t("settings")}</h1>
       </header>
 
       <div className="settings-layout">
-        <nav className="settings-sections" aria-label="Settings sections">
+        <nav className="settings-sections" aria-label={t("settings")}>
           {SETTINGS_SECTIONS.map((section) => {
             const key = section.toLowerCase() as "general" | "transcription" | "audio" | "appearance" | "storage" | "about";
             return (

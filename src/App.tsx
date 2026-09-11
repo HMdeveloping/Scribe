@@ -49,7 +49,7 @@ import { useWhisperModelDownloads } from "./hooks/useWhisperModelDownloads";
 import { createTranslator, currentGreetingKey, type AppLanguage } from "./i18n";
 import type { Project, RecordingDetails, RecordingSummary } from "./types/library";
 
-type TranscriptionErrorKind = "model_missing" | "model_downloading" | "ffmpeg_missing" | "whisper_missing" | "transcription";
+type TranscriptionErrorKind = "model_missing" | "model_downloading" | "model_ready" | "ffmpeg_missing" | "whisper_missing" | "audio_missing" | "conversion_failed" | "transcript_unavailable" | "transcription";
 
 type ClassifiedTranscriptionError = {
   kind: TranscriptionErrorKind;
@@ -111,6 +111,9 @@ function classifyTranscriptionError(reason: unknown): ClassifiedTranscriptionErr
   if (kind === "model_downloading") return { kind: "model_downloading", message };
   if (kind === "ffmpeg_missing") return { kind: "ffmpeg_missing", message };
   if (kind === "whisper_missing") return { kind: "whisper_missing", message };
+  if (kind === "invalid_recording") return { kind: "audio_missing", message };
+  if (kind === "conversion_failed") return { kind: "conversion_failed", message };
+  if (kind === "transcript_unavailable") return { kind: "transcript_unavailable", message };
   return { kind: "transcription", message };
 }
 
@@ -231,6 +234,44 @@ function App() {
     setSettingsData(nextSettings);
     setAppLanguage(nextSettings.settings.appLanguage);
   }, []);
+
+  const applySavedRecording = useCallback((details: RecordingDetails) => {
+    setRecording(details.recording);
+    setTranscript(details.transcript);
+    setRecordingProjectId(details.projectId);
+    setRecordingProjectName(details.projectName);
+    const summary: RecordingSummary = {
+      id: details.recording.id,
+      projectId: details.projectId,
+      projectName: details.projectName,
+      title: details.recording.title,
+      createdAt: details.recording.createdAt,
+      updatedAt: details.recording.createdAt,
+      durationSeconds: details.recording.durationSeconds,
+      language: details.recording.language,
+      audioFile: details.recording.audioFile,
+      mimeType: details.recording.mimeType,
+      transcriptFile: details.transcript ? "transcript.json" : null,
+      transcriptStatus: details.transcriptStatus,
+      archivedAt: null,
+    };
+    setRecordings((current) => sortByLibraryRecency([summary, ...current.filter((item) => item.id !== summary.id)]));
+    setArchivedRecordings((current) => current.filter((item) => item.id !== summary.id));
+    setProjectRecordings((current) => {
+      if (!details.projectId || activeProject?.id !== details.projectId) return current.filter((item) => item.id !== summary.id);
+      return sortByLibraryRecency([summary, ...current.filter((item) => item.id !== summary.id)]);
+    });
+    setProjects((current) => current.map((project) => {
+      const hadRecording = recordings.some((item) => item.id === summary.id && item.projectId === project.id);
+      const hasRecording = details.projectId === project.id;
+      if (hadRecording === hasRecording) return project;
+      return {
+        ...project,
+        recordingCount: Math.max(0, project.recordingCount + (hasRecording ? 1 : -1)),
+        totalDurationSeconds: Math.max(0, project.totalDurationSeconds + (hasRecording ? summary.durationSeconds : -summary.durationSeconds)),
+      };
+    }));
+  }, [activeProject?.id, recordings]);
 
   const whisperDownloads = useWhisperModelDownloads({
     getSettings: () => settingsData,
@@ -470,7 +511,7 @@ function App() {
       setTranscriptionError({ kind: "model_missing" });
       return;
     }
-    const selectedModelPending = selectedModel && !selectedModel.installed && (
+    const selectedModelPending = !selectedModel.installed && (
       whisperDownloads.activeDownloadId === selectedModel.id ||
       whisperDownloads.queuedDownloads.includes(selectedModel.id) ||
       whisperDownloads.downloadProgress[selectedModel.id]?.state === "downloading" ||
@@ -559,7 +600,7 @@ function App() {
       const selected = await open({
         multiple: false,
         filters: [{
-          name: "Audio",
+          name: t("audio"),
           extensions: ["mp3", "wav", "m4a", "aac", "flac", "ogg", "oga", "opus", "webm", "mp4"],
         }],
       });
@@ -580,11 +621,8 @@ function App() {
         projectId,
         importId,
       });
-      setRecording(details.recording);
-      setTranscript(null);
-      setRecordingProjectId(details.projectId);
-      setRecordingProjectName(details.projectName);
-      await refreshLibrary();
+      applySavedRecording({ ...details, transcript: null });
+      void refreshLibrary();
       void transcribeRecording(details.recording);
     } catch (reason) {
       console.error("Scribe: unable to import audio", reason);
@@ -592,7 +630,13 @@ function App() {
       setFinalizingProgress(null);
       activeImportProgressIdRef.current = null;
       setTranscriptionError(classifyTranscriptionError(reason));
-      window.alert(t("importFailed"));
+      window.alert(typeof reason === "string" && reason.includes("Unsupported audio file type")
+        ? t("importUnsupported")
+        : typeof reason === "string" && reason.includes("not found")
+          ? t("importSourceMissing")
+          : typeof reason === "string" && reason.includes("inspect imported audio")
+            ? t("importInspectFailed")
+            : t("importFailed"));
     }
   }
 
@@ -858,6 +902,22 @@ function App() {
     };
   }, [settingsData?.models, whisperDownloads.activeDownloadId, whisperDownloads.downloadFailures, whisperDownloads.downloadProgress, whisperDownloads.queuedDownloads]);
 
+  const selectedTranscriptionModel = settingsData?.models.find((model) => model.id === settingsData.settings.whisperModel) ?? null;
+  const selectedModelStillDownloading = selectedTranscriptionModel ? (
+    !selectedTranscriptionModel.installed && (
+      whisperDownloads.activeDownloadId === selectedTranscriptionModel.id ||
+      whisperDownloads.queuedDownloads.includes(selectedTranscriptionModel.id) ||
+      whisperDownloads.downloadProgress[selectedTranscriptionModel.id]?.state === "downloading" ||
+      whisperDownloads.downloadProgress[selectedTranscriptionModel.id]?.state === "installing"
+    )
+  ) : false;
+
+  useEffect(() => {
+    if (transcriptionError?.kind === "model_downloading" && selectedTranscriptionModel?.installed) {
+      setTranscriptionError({ kind: "model_ready" });
+    }
+  }, [selectedTranscriptionModel?.installed, transcriptionError?.kind]);
+
   function toggleSidebar() {
     setSidebarMode(sidebarCollapsed ? "expanded" : "collapsed");
   }
@@ -973,6 +1033,7 @@ function App() {
           onRetry={() => {
             if (recording) void transcribeRecording(recording);
           }}
+          retryDisabled={transcriptionError?.kind === "model_downloading" && selectedModelStillDownloading}
           onContinue={() => {
             setFinalizing(false);
             setFinalizingProgress(null);
@@ -988,7 +1049,7 @@ function App() {
             setRecording(nextRecording);
             setTranscript(null);
             void transcribeRecording(nextRecording);
-          }} onDiscard={goBack} />
+          }} onSaved={applySavedRecording} onDiscard={goBack} />
         ) : view === "transcript" && recording ? <TranscriptView
           recording={recording}
           transcript={transcript}

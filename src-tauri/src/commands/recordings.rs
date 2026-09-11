@@ -141,6 +141,7 @@ pub struct RecordingDetails {
 #[serde(rename_all = "camelCase")]
 pub struct SaveRecordingResult {
     id: String,
+    details: RecordingDetails,
 }
 
 #[derive(Debug, Serialize)]
@@ -374,6 +375,44 @@ fn ffmpeg_duration_seconds(ffmpeg: &Path, audio_path: &Path) -> Result<u64, Stri
     Ok(((hours * 3600.0) + (minutes * 60.0) + seconds)
         .round()
         .max(0.0) as u64)
+}
+
+fn probe_import_duration_seconds(app: &AppHandle, audio_path: &Path) -> Result<u64, String> {
+    let ffprobe = resolve_ffprobe(app).map_err(|error| match error {
+        TranscriptionError::FfmpegMissing(message) => message,
+        other => format!("{other:?}"),
+    })?;
+    let output = Command::new(&ffprobe)
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(audio_path)
+        .output()
+        .map_err(|error| format!("Unable to inspect audio duration: {error}"))?;
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Ok(seconds) = stdout.trim().parse::<f64>() {
+            if seconds.is_finite() && seconds >= 0.0 {
+                return Ok(seconds.round() as u64);
+            }
+        }
+    } else {
+        eprintln!(
+            "Scribe import: ffprobe duration failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let ffmpeg = resolve_ffmpeg(app).map_err(|error| match error {
+        TranscriptionError::FfmpegMissing(message) => message,
+        other => format!("{other:?}"),
+    })?;
+    ffmpeg_duration_seconds(&ffmpeg, audio_path)
 }
 
 fn looks_like_media_timestamp(value: &str) -> bool {
@@ -1684,7 +1723,11 @@ pub fn save_recording(
         }
     }
 
-    Ok(SaveRecordingResult { id: recording_id })
+    let details = get_recording(app, recording_id.clone())?;
+    Ok(SaveRecordingResult {
+        id: recording_id,
+        details,
+    })
 }
 
 #[tauri::command]
@@ -1726,11 +1769,6 @@ fn import_audio_recording_blocking(
         return Err("Unsupported audio file type".to_string());
     }
 
-    let ffmpeg = resolve_ffmpeg(&app).map_err(|error| match error {
-        TranscriptionError::FfmpegMissing(message) => message,
-        other => format!("{other:?}"),
-    })?;
-    let duration_seconds = ffmpeg_duration_seconds(&ffmpeg, &source)?;
     let imported_at = now_text();
     let source_created_at = imported_source_created_at(&app, &source, &imported_at);
     let recording_id = uuid_like_id();
@@ -1740,6 +1778,16 @@ fn import_audio_recording_blocking(
         .map_err(|error| format!("Unable to create recording directory: {error}"))?;
     let audio_path = recording_dir.join(&audio_file);
     copy_with_progress(&app, &import_id, &recording_id, &source, &audio_path)?;
+    let duration_seconds = match probe_import_duration_seconds(&app, &audio_path) {
+        Ok(seconds) => seconds,
+        Err(error) => {
+            eprintln!(
+                "Scribe import: copied audio could not be probed at {}: {error}",
+                audio_path.display()
+            );
+            0
+        }
+    };
 
     let metadata = RecordingMetadata {
         version: 1,

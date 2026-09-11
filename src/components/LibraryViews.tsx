@@ -26,6 +26,11 @@ function recordingCountLabel(count: number, t: TFunction) {
   return count === 1 ? t("recordingSingular") : t("recordingPlural");
 }
 
+function reconcileSelectedIds(current: Set<string>, visibleIds: string[]) {
+  const visible = new Set(visibleIds);
+  return new Set([...current].filter((id) => visible.has(id)));
+}
+
 export function RecordingRow({
   recording,
   t,
@@ -123,7 +128,9 @@ export function HomeRecentRecordings({
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
 
-  useEffect(() => setSelectedIds(new Set()), [recordings]);
+  useEffect(() => {
+    setSelectedIds((current) => reconcileSelectedIds(current, visibleIds));
+  }, [visibleIds.join(":")]);
 
   useEffect(() => {
     function isTypingTarget(target: EventTarget | null) {
@@ -357,6 +364,10 @@ export function ProjectsView({
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
 
   useEffect(() => {
+    setSelectedIds((current) => reconcileSelectedIds(current, visibleIds));
+  }, [visibleIds.join(":")]);
+
+  useEffect(() => {
     function isTypingTarget(target: EventTarget | null) {
       if (!(target instanceof HTMLElement)) return false;
       return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
@@ -531,7 +542,9 @@ export function RecordingsView({
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
 
   useEffect(() => setSelectedIds(new Set()), [archived]);
-  useEffect(() => setSelectedIds(new Set()), [recordings]);
+  useEffect(() => {
+    setSelectedIds((current) => reconcileSelectedIds(current, visibleIds));
+  }, [visibleIds.join(":")]);
 
   useEffect(() => {
     function isTypingTarget(target: EventTarget | null) {
@@ -711,7 +724,9 @@ export function ProjectDetailView({
   useEffect(() => {
     setDraftName(project.name);
   }, [project.name]);
-  useEffect(() => setSelectedIds(new Set()), [recordings]);
+  useEffect(() => {
+    setSelectedIds((current) => reconcileSelectedIds(current, visibleIds));
+  }, [visibleIds.join(":")]);
 
   useEffect(() => {
     if (!isRenaming) return;

@@ -1,11 +1,12 @@
 {
   "name": "scribe-app",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "audit:i18n": "node scripts/audit-i18n.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

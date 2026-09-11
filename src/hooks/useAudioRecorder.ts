@@ -85,7 +85,11 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
     if (stopPromiseRef.current) return stopPromiseRef.current;
 
     stopPromiseRef.current = new Promise<Blob>((resolve, reject) => {
-      const finalize = () => resolve(new Blob(chunksRef.current, { type: recorder.mimeType || mimeType }));
+      const finalize = () => {
+        window.setTimeout(() => {
+          resolve(new Blob(chunksRef.current, { type: recorder.mimeType || mimeType }));
+        }, 0);
+      };
       const fail = (reason: unknown) => reject(reason);
       recorder.addEventListener("stop", finalize, { once: true });
       recorder.addEventListener("error", fail, { once: true });

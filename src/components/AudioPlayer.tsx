@@ -18,8 +18,8 @@ export function AudioPlayer({ player, t }: { player: AudioPlayerState; t: TFunct
   const scrubberDisabled = player.status !== "ready" || !player.canSeek;
 
   return (
-    <div className="audio-player" aria-label="Audio player">
-      <button disabled={playDisabled} aria-label={player.isPlaying ? "Pause recording" : "Play recording"} onClick={player.togglePlayback}>
+    <div className="audio-player" aria-label={t("audioPlayer")}>
+      <button disabled={playDisabled} aria-label={player.isPlaying ? t("pauseRecording") : t("playRecording")} onClick={player.togglePlayback}>
         {player.status === "loading" ? <LoaderCircle size={18} /> : player.isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
       </button>
       <span>{formatPlaybackTime(player.currentTime)}</span>
@@ -31,7 +31,7 @@ export function AudioPlayer({ player, t }: { player: AudioPlayerState; t: TFunct
         step="0.01"
         value={Math.min(player.currentTime, player.duration || 0)}
         disabled={scrubberDisabled}
-        aria-label="Playback position"
+        aria-label={t("playbackPosition")}
         onInput={(event) => player.seekTo(Number(event.currentTarget.value))}
         onChange={(event) => player.seekTo(Number(event.currentTarget.value))}
       />
