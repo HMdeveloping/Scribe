@@ -74,7 +74,7 @@ jobs:
           brew update
           brew install ffmpeg cmake
           git clone --depth 1 --branch "$WHISPER_CPP_REF" https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
-          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON
+          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8-a
           cmake --build /tmp/whisper.cpp/build --config Release --target whisper-cli
           FFMPEG_PATH="$(command -v ffmpeg)" \
           FFPROBE_PATH="$(command -v ffprobe)" \
