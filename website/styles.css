@@ -73,10 +73,18 @@ h1 {
 
 .downloads {
   display: flex;
+  align-items: flex-start;
   justify-content: center;
   gap: 14px;
   margin: 34px 0 0;
   flex-wrap: wrap;
+}
+
+.download-card {
+  width: min(100%, 320px);
+  display: grid;
+  justify-items: stretch;
+  gap: 9px;
 }
 
 .download-button {
@@ -116,6 +124,54 @@ h1 {
 .secondary .platform-icon {
   background: rgba(79, 109, 245, 0.09);
   color: #4f6df5;
+}
+
+.macos-note {
+  margin: 0;
+  color: #6f7277;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.macos-help {
+  border: 1px solid rgba(32, 33, 35, 0.09);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.66);
+  color: #5f6368;
+  text-align: left;
+  box-shadow: 0 10px 24px rgba(32, 33, 35, 0.05);
+}
+
+.macos-help summary {
+  padding: 12px 14px;
+  color: #34363a;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  list-style-position: inside;
+}
+
+.macos-help ol {
+  margin: 0;
+  padding: 0 18px 0 38px;
+  color: #55595f;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.macos-help li + li {
+  margin-top: 5px;
+}
+
+.macos-help p {
+  margin: 12px 14px 0;
+  color: #6f7277;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.macos-help p:last-child {
+  margin-bottom: 14px;
 }
 
 .platforms {
@@ -170,6 +226,10 @@ h1 {
 
   .downloads,
   .download-button {
+    width: 100%;
+  }
+
+  .download-card {
     width: 100%;
   }
 

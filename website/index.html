@@ -21,10 +21,27 @@
         </p>
 
         <div class="downloads" aria-label="Downloads">
-          <a id="download-macos" class="download-button primary" href="#" data-asset="Scribe-macOS.dmg">
-            <span class="platform-icon" aria-hidden="true">macOS</span>
-            Download for macOS
-          </a>
+          <div class="download-card macos-download">
+            <a id="download-macos" class="download-button primary" href="#" data-asset="Scribe-macOS.dmg">
+              <span class="platform-icon" aria-hidden="true">macOS</span>
+              Download for macOS
+            </a>
+            <p class="macos-note">macOS may ask you to confirm Scribe the first time you open it.</p>
+            <details class="macos-help">
+              <summary>First time opening Scribe?</summary>
+              <ol>
+                <li>Download Scribe and move it to Applications.</li>
+                <li>Try to open Scribe once.</li>
+                <li>If macOS shows “Scribe Not Opened”, click Done.</li>
+                <li>Open System Settings → Privacy &amp; Security.</li>
+                <li>Scroll down and click “Open Anyway” next to Scribe.</li>
+                <li>Confirm by clicking “Open”.</li>
+                <li>After this, Scribe can be opened normally.</li>
+              </ol>
+              <p>Scribe is currently distributed independently and is not Apple-notarized. macOS therefore asks for an extra confirmation the first time you open it.</p>
+              <p>Future Scribe updates are cryptographically signed and verified by the app before installation.</p>
+            </details>
+          </div>
           <a id="download-windows" class="download-button secondary" href="#" data-asset="Scribe-Windows.exe">
             <span class="platform-icon" aria-hidden="true">Win</span>
             Download for Windows
