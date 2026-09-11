@@ -57,7 +57,7 @@ button {
 .app {
   display: flex;
   width: 100vw;
-  height: 100dvh;
+  height: 100%;
   min-height: 0;
   background: #ffffff;
   overflow: hidden;
@@ -77,7 +77,7 @@ button {
 
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  min-height: 0;
 
   background: var(--sidebar);
 
@@ -89,6 +89,7 @@ button {
 .sidebar-top {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden auto;
 }
@@ -325,11 +326,51 @@ button {
 
 .navigation {
   margin-top: 15px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .nav-item,
 .settings-button {
   width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.nav-item {
+  height: 41px;
+  padding: 0 11px;
+  border: none;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: transparent;
+  color: #353538;
+  cursor: pointer;
+  text-align: left;
+  font-size: 14px;
+  white-space: nowrap;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.nav-item > span:not(.coming-soon),
+.settings-button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-button {
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+.settings-button {
   height: 41px;
 
   padding: 0 11px;
@@ -407,6 +448,11 @@ button {
 
 .sidebar-section {
   margin-top: 25px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .section-label {

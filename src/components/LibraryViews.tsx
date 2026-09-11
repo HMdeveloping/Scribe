@@ -1,6 +1,6 @@
 import { Archive, AudioLines, Check, FolderClosed, FolderInput, MoreHorizontal, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import type { TFunction } from "../i18n";
+import { languageLocales, type AppLanguage, type TFunction } from "../i18n";
 import type { Project, RecordingSummary } from "../types/library";
 import type { ContextMenuAction } from "./ContextMenu";
 import { BackButton } from "./BackButton";
@@ -13,17 +13,28 @@ export function formatLibraryDuration(seconds: number) {
   return `${minutes}m`;
 }
 
-export function formatRecordingDate(value: string) {
+export function formatRecordingDateTime(value: string, appLanguage: AppLanguage) {
   const numeric = Number(value);
   const date = Number.isFinite(numeric) && /^\d+$/.test(value)
     ? new Date(numeric * 1000)
     : new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(date);
+  const locale = languageLocales[appLanguage] ?? languageLocales.en;
+  const formattedDate = new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+  }).format(date);
+  const formattedTime = new Intl.DateTimeFormat(locale, {
+    timeStyle: "short",
+  }).format(date);
+  return `${formattedDate} · ${formattedTime}`;
 }
 
 function recordingCountLabel(count: number, t: TFunction) {
   return count === 1 ? t("recordingSingular") : t("recordingPlural");
+}
+
+export function localizedRecordingTitle(title: string, t: TFunction) {
+  return title === "New recording" ? t("newRecordingTitle") : title;
 }
 
 function reconcileSelectedIds(current: Set<string>, visibleIds: string[]) {
@@ -34,6 +45,7 @@ function reconcileSelectedIds(current: Set<string>, visibleIds: string[]) {
 export function RecordingRow({
   recording,
   t,
+  appLanguage,
   onOpen,
   actions,
   selected = false,
@@ -44,6 +56,7 @@ export function RecordingRow({
 }: {
   recording: RecordingSummary;
   t: TFunction;
+  appLanguage: AppLanguage;
   onOpen: (id: string) => void;
   actions?: ContextMenuAction[];
   selected?: boolean;
@@ -77,10 +90,10 @@ export function RecordingRow({
         <AudioLines size={17} strokeWidth={1.8} />
       </div>
       <div className="recording-row-copy">
-        <strong>{recording.title}</strong>
+        <strong>{localizedRecordingTitle(recording.title, t)}</strong>
         <span>
           {recording.projectName ? `${recording.projectName} · ` : ""}
-          {formatRecordingDate(recording.createdAt)} · {formatLibraryDuration(recording.durationSeconds)} · {t("slovenian")}
+          {formatRecordingDateTime(recording.createdAt, appLanguage)} · {formatLibraryDuration(recording.durationSeconds)} · {t("slovenian")}
         </span>
       </div>
       </button>
@@ -99,6 +112,7 @@ export function RecordingRow({
 export function HomeRecentRecordings({
   recordings,
   t,
+  appLanguage,
   onOpenRecording,
   onViewAll,
   onMoveRecordings,
@@ -109,6 +123,7 @@ export function HomeRecentRecordings({
 }: {
   recordings: RecordingSummary[];
   t: TFunction;
+  appLanguage: AppLanguage;
   onOpenRecording: (id: string) => void;
   onViewAll: () => void;
   onMoveRecordings: (recordingIds: string[], projectId: string | null) => void;
@@ -236,6 +251,7 @@ export function HomeRecentRecordings({
               key={recording.id}
               recording={recording}
               t={t}
+              appLanguage={appLanguage}
               onOpen={onOpenRecording}
               actions={getRecordingActions(recording)}
               selected={selectedIds.has(recording.id)}
@@ -506,6 +522,7 @@ export function ProjectsView({
 export function RecordingsView({
   recordings,
   t,
+  appLanguage,
   onOpenRecording,
   onOpenArchived,
   onMoveRecordings,
@@ -520,6 +537,7 @@ export function RecordingsView({
 }: {
   recordings: RecordingSummary[];
   t: TFunction;
+  appLanguage: AppLanguage;
   onOpenRecording: (id: string) => void;
   onOpenArchived?: () => void;
   onMoveRecordings: (recordingIds: string[], projectId: string | null) => void;
@@ -655,6 +673,7 @@ export function RecordingsView({
               key={recording.id}
               recording={recording}
               t={t}
+              appLanguage={appLanguage}
               onOpen={onOpenRecording}
               actions={getRecordingActions(recording)}
               selected={selectedIds.has(recording.id)}
@@ -682,6 +701,7 @@ export function ProjectDetailView({
   project,
   recordings,
   t,
+  appLanguage,
   onNewRecording,
   onImportAudio,
   onOpenRecording,
@@ -697,6 +717,7 @@ export function ProjectDetailView({
   project: Project;
   recordings: RecordingSummary[];
   t: TFunction;
+  appLanguage: AppLanguage;
   onNewRecording: () => void;
   onImportAudio: () => void;
   onOpenRecording: (id: string) => void;
@@ -879,6 +900,7 @@ export function ProjectDetailView({
               key={recording.id}
               recording={recording}
               t={t}
+              appLanguage={appLanguage}
               onOpen={onOpenRecording}
               actions={getRecordingActions(recording)}
               selected={selectedIds.has(recording.id)}

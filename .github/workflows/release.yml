@@ -25,6 +25,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       WHISPER_CPP_REF: v1.7.6
+      FFMPEG_REF: n6.1.1
     strategy:
       fail-fast: false
       matrix:
@@ -71,27 +72,104 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          runtime_dir="src-tauri/resources/bin/${{ matrix.target }}"
           brew update
-          brew install ffmpeg cmake
+          brew install cmake pkg-config
+          git clone --depth 1 --branch "$FFMPEG_REF" https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg
+          pushd /tmp/ffmpeg
+          ./configure \
+            --prefix=/tmp/scribe-ffmpeg \
+            --arch=arm64 \
+            --cc=clang \
+            --disable-debug \
+            --disable-doc \
+            --disable-ffplay \
+            --disable-shared \
+            --enable-static \
+            --disable-autodetect \
+            --disable-encoders \
+            --enable-encoder=pcm_s16le \
+            --disable-decoders \
+            --enable-decoder=aac \
+            --enable-decoder=mp3 \
+            --enable-decoder=opus \
+            --enable-decoder=pcm_s16be \
+            --enable-decoder=pcm_s16le \
+            --enable-decoder=pcm_s24be \
+            --enable-decoder=pcm_s24le \
+            --enable-decoder=pcm_s32be \
+            --enable-decoder=pcm_s32le \
+            --enable-decoder=pcm_u8 \
+            --disable-muxers \
+            --enable-muxer=null \
+            --enable-muxer=wav \
+            --disable-demuxers \
+            --enable-demuxer=aac \
+            --enable-demuxer=flac \
+            --enable-demuxer=matroska \
+            --enable-demuxer=mov \
+            --enable-demuxer=mp3 \
+            --enable-demuxer=ogg \
+            --enable-demuxer=wav \
+            --disable-parsers \
+            --enable-parser=aac \
+            --enable-parser=flac \
+            --enable-parser=mpegaudio \
+            --enable-parser=opus \
+            --disable-protocols \
+            --enable-protocol=file \
+            --disable-bsfs \
+            --disable-devices \
+            --disable-filters \
+            --enable-filter=aresample \
+            --enable-filter=format \
+            --enable-filter=anull
+          make -j"$(sysctl -n hw.ncpu)"
+          make install
+          popd
           git clone --depth 1 --branch "$WHISPER_CPP_REF" https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
-          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8-a
+          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8-a -DCMAKE_INSTALL_RPATH=@executable_path
           cmake --build /tmp/whisper.cpp/build --config Release --target whisper-cli
-          FFMPEG_PATH="$(command -v ffmpeg)" \
-          FFPROBE_PATH="$(command -v ffprobe)" \
+          FFMPEG_PATH="/tmp/scribe-ffmpeg/bin/ffmpeg" \
+          FFPROBE_PATH="/tmp/scribe-ffmpeg/bin/ffprobe" \
           WHISPER_CLI_PATH="/tmp/whisper.cpp/build/bin/whisper-cli" \
           node scripts/stage-runtime-binaries.mjs "${{ matrix.target }}"
+          test -x "$runtime_dir/ffmpeg"
+          test -x "$runtime_dir/ffprobe"
+          test -x "$runtime_dir/whisper-cli"
+          file "$runtime_dir/ffmpeg" "$runtime_dir/ffprobe" "$runtime_dir/whisper-cli"
+          "$runtime_dir/ffmpeg" -version
+          "$runtime_dir/ffmpeg" -L
+          "$runtime_dir/ffprobe" -version
+          ! "$runtime_dir/ffmpeg" -version | grep -- '--enable-nonfree'
+          ! "$runtime_dir/ffprobe" -version | grep -- '--enable-nonfree'
+          otool -L "$runtime_dir/ffmpeg" "$runtime_dir/ffprobe" "$runtime_dir/whisper-cli"
+          ! otool -L "$runtime_dir/ffmpeg" "$runtime_dir/ffprobe" "$runtime_dir/whisper-cli" | grep -E '/opt/homebrew|/usr/local'
 
       - name: Prepare Windows runtime binaries
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          choco install ffmpeg cmake --yes --no-progress
+          choco install cmake --yes --no-progress
+          $runtimeDir = "src-tauri/resources/bin/${{ matrix.target }}"
+          $ffmpegZip = "$env:RUNNER_TEMP\ffmpeg-win64-lgpl.zip"
+          $ffmpegDir = "$env:RUNNER_TEMP\ffmpeg-win64-lgpl"
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip" -OutFile $ffmpegZip
+          Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegDir
+          $ffmpegPath = (Get-ChildItem -Path $ffmpegDir -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName
+          $ffprobePath = (Get-ChildItem -Path $ffmpegDir -Recurse -Filter ffprobe.exe | Select-Object -First 1).FullName
+          if (-not $ffmpegPath) {
+            throw "Unable to find ffmpeg.exe in LGPL Windows FFmpeg archive"
+          }
+          if (-not $ffprobePath) {
+            throw "Unable to find ffprobe.exe in LGPL Windows FFmpeg archive"
+          }
           git clone --depth 1 --branch $env:WHISPER_CPP_REF https://github.com/ggml-org/whisper.cpp.git "$env:RUNNER_TEMP\whisper.cpp"
           cmake -S "$env:RUNNER_TEMP\whisper.cpp" -B "$env:RUNNER_TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON
           cmake --build "$env:RUNNER_TEMP\whisper.cpp\build" --config Release --target whisper-cli
-          $env:FFMPEG_PATH = (Get-Command ffmpeg.exe).Source
-          $env:FFPROBE_PATH = (Get-Command ffprobe.exe).Source
+          $env:FFMPEG_PATH = $ffmpegPath
+          $env:FFPROBE_PATH = $ffprobePath
           $candidates = @(
             "$env:RUNNER_TEMP\whisper.cpp\build\bin\Release\whisper-cli.exe",
             "$env:RUNNER_TEMP\whisper.cpp\build\bin\whisper-cli.exe",
@@ -102,6 +180,23 @@ jobs:
             throw "Unable to find built whisper-cli.exe"
           }
           node scripts/stage-runtime-binaries.mjs "${{ matrix.target }}"
+          if (-not (Test-Path "$runtimeDir/ffmpeg.exe" -PathType Leaf)) {
+            throw "Missing staged ffmpeg.exe"
+          }
+          if (-not (Test-Path "$runtimeDir/ffprobe.exe" -PathType Leaf)) {
+            throw "Missing staged ffprobe.exe"
+          }
+          if (-not (Test-Path "$runtimeDir/whisper-cli.exe" -PathType Leaf)) {
+            throw "Missing staged whisper-cli.exe"
+          }
+          & "$runtimeDir/ffmpeg.exe" -version
+          & "$runtimeDir/ffprobe.exe" -version
+          if ((& "$runtimeDir/ffmpeg.exe" -version) -match "--enable-nonfree") {
+            throw "ffmpeg.exe was built with --enable-nonfree"
+          }
+          if ((& "$runtimeDir/ffprobe.exe" -version) -match "--enable-nonfree") {
+            throw "ffprobe.exe was built with --enable-nonfree"
+          }
 
       - name: Build signed Tauri bundles for workflow artifact
         if: github.event_name == 'workflow_dispatch' && inputs.publish_release != true
@@ -112,6 +207,27 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
+      - name: Verify dry-run macOS app runtime resources
+        if: matrix.target == 'aarch64-apple-darwin' && github.event_name == 'workflow_dispatch' && inputs.publish_release != true
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scribe.app"
+          bundled_dir="$app_path/Contents/Resources/bin/${{ matrix.target }}"
+          test -d "$bundled_dir"
+          test -x "$bundled_dir/ffmpeg"
+          test -x "$bundled_dir/ffprobe"
+          test -x "$bundled_dir/whisper-cli"
+          find "$app_path" -type f | grep -E 'ffmpeg|ffprobe|whisper'
+          ls -l "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
+          file "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
+          "$bundled_dir/ffmpeg" -version
+          "$bundled_dir/ffprobe" -version
+          ! "$bundled_dir/ffmpeg" -version | grep -- '--enable-nonfree'
+          ! "$bundled_dir/ffprobe" -version | grep -- '--enable-nonfree'
+          otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
+          ! otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli" | grep -E '/opt/homebrew|/usr/local'
+
       - name: Upload dry-run Tauri artifacts
         if: github.event_name == 'workflow_dispatch' && inputs.publish_release != true
         uses: actions/upload-artifact@v4
@@ -119,6 +235,35 @@ jobs:
           name: ${{ matrix.artifactName }}
           path: ${{ matrix.artifactPath }}
           if-no-files-found: error
+
+      - name: Build macOS release bundle for runtime verification
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- ${{ matrix.args }}
+
+      - name: Verify release macOS app runtime resources before upload
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scribe.app"
+          bundled_dir="$app_path/Contents/Resources/bin/${{ matrix.target }}"
+          test -d "$bundled_dir"
+          test -x "$bundled_dir/ffmpeg"
+          test -x "$bundled_dir/ffprobe"
+          test -x "$bundled_dir/whisper-cli"
+          find "$app_path" -type f | grep -E 'ffmpeg|ffprobe|whisper'
+          ls -l "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
+          file "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
+          "$bundled_dir/ffmpeg" -version
+          "$bundled_dir/ffprobe" -version
+          ! "$bundled_dir/ffmpeg" -version | grep -- '--enable-nonfree'
+          ! "$bundled_dir/ffprobe" -version | grep -- '--enable-nonfree'
+          otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
+          ! otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli" | grep -E '/opt/homebrew|/usr/local'
 
       - name: Build and upload Tauri release assets
         if: github.event_name == 'push' || inputs.publish_release == true
@@ -141,6 +286,23 @@ jobs:
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+      - name: Verify macOS release app runtime resources
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scribe.app"
+          bundled_dir="$app_path/Contents/Resources/bin/${{ matrix.target }}"
+          test -d "$bundled_dir"
+          test -x "$bundled_dir/ffmpeg"
+          test -x "$bundled_dir/ffprobe"
+          test -x "$bundled_dir/whisper-cli"
+          find "$app_path" -type f | grep -E 'ffmpeg|ffprobe|whisper'
+          ls -l "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
+          file "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
+          otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
+          ! otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli" | grep -E '/opt/homebrew|/usr/local'
 
       - name: Upload stable website download alias
         if: github.event_name == 'push' || inputs.publish_release == true

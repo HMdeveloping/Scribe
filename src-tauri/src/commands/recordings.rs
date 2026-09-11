@@ -10,6 +10,9 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 const DEFAULT_WHISPER_MODEL_ID: &str = "large-v3-turbo";
 const DEFAULT_TRANSCRIPTION_LANGUAGE: &str = "sl";
 const DEFAULT_APP_LANGUAGE: &str = "en";
@@ -208,6 +211,7 @@ struct LoadedSettings {
     settings: ScribeSettings,
     settings_file_existed: bool,
     onboarding_flag_present: bool,
+    app_language_present: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -271,6 +275,20 @@ pub enum TranscriptionError {
     TranscriptUnavailable(String),
     InvalidRecording(String),
     Io(String),
+}
+
+fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        return path
+            .metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false);
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
 }
 
 fn is_valid_recording_id(id: &str) -> bool {
@@ -356,9 +374,12 @@ fn ffmpeg_duration_seconds(ffmpeg: &Path, audio_path: &Path) -> Result<u64, Stri
     let stderr = String::from_utf8_lossy(&output.stderr);
     let marker = "Duration: ";
     let Some(start) = stderr.find(marker).map(|index| index + marker.len()) else {
-        return Err("Unable to determine audio duration".to_string());
+        return ffmpeg_decode_duration_seconds(ffmpeg, audio_path);
     };
     let value = stderr[start..].split(',').next().unwrap_or("").trim();
+    if value == "N/A" {
+        return ffmpeg_decode_duration_seconds(ffmpeg, audio_path);
+    }
     let parts = value.split(':').collect::<Vec<_>>();
     if parts.len() != 3 {
         return Err("Unable to parse audio duration".to_string());
@@ -375,6 +396,42 @@ fn ffmpeg_duration_seconds(ffmpeg: &Path, audio_path: &Path) -> Result<u64, Stri
     Ok(((hours * 3600.0) + (minutes * 60.0) + seconds)
         .round()
         .max(0.0) as u64)
+}
+
+fn parse_ffmpeg_time_seconds(value: &str) -> Option<f64> {
+    let parts = value.split(':').collect::<Vec<_>>();
+    if parts.len() != 3 {
+        return None;
+    }
+    let hours = parts[0].parse::<f64>().ok()?;
+    let minutes = parts[1].parse::<f64>().ok()?;
+    let seconds = parts[2].parse::<f64>().ok()?;
+    Some(hours * 3600.0 + minutes * 60.0 + seconds)
+}
+
+fn ffmpeg_decode_duration_seconds(ffmpeg: &Path, audio_path: &Path) -> Result<u64, String> {
+    let output = Command::new(ffmpeg)
+        .arg("-hide_banner")
+        .arg("-i")
+        .arg(audio_path)
+        .args(["-vn", "-f", "null", "-"])
+        .output()
+        .map_err(|error| format!("Unable to decode audio duration: {error}"))?;
+    if !output.status.success() {
+        eprintln!(
+            "Scribe import: FFmpeg duration decode failed: {}",
+            summarize_process_output(&output.stderr)
+        );
+        return Err("Unable to decode audio duration".to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let duration = stderr
+        .split_whitespace()
+        .filter_map(|part| part.strip_prefix("time="))
+        .filter_map(parse_ffmpeg_time_seconds)
+        .last()
+        .ok_or_else(|| "Unable to determine decoded audio duration".to_string())?;
+    Ok(duration.round().max(0.0) as u64)
 }
 
 fn probe_import_duration_seconds(app: &AppHandle, audio_path: &Path) -> Result<u64, String> {
@@ -962,6 +1019,7 @@ fn load_settings(app: &AppHandle) -> LoadedSettings {
         settings: default_settings(),
         settings_file_existed: false,
         onboarding_flag_present: false,
+        app_language_present: false,
     };
     let Ok(path) = settings_path(app) else {
         return fallback();
@@ -970,12 +1028,21 @@ fn load_settings(app: &AppHandle) -> LoadedSettings {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return fallback();
     };
-    let onboarding_flag_present = serde_json::from_str::<Value>(&raw)
-        .ok()
+    let settings_json = serde_json::from_str::<Value>(&raw).ok();
+    let onboarding_flag_present = settings_json
+        .as_ref()
         .and_then(|value| {
             value
                 .as_object()
                 .map(|object| object.contains_key("onboardingCompleted"))
+        })
+        .unwrap_or(false);
+    let app_language_present = settings_json
+        .as_ref()
+        .and_then(|value| {
+            value
+                .as_object()
+                .map(|object| object.contains_key("appLanguage"))
         })
         .unwrap_or(false);
     let Ok(mut settings) = serde_json::from_str::<ScribeSettings>(&raw) else {
@@ -983,6 +1050,7 @@ fn load_settings(app: &AppHandle) -> LoadedSettings {
             settings: default_settings(),
             settings_file_existed,
             onboarding_flag_present,
+            app_language_present,
         };
     };
 
@@ -1002,6 +1070,9 @@ fn load_settings(app: &AppHandle) -> LoadedSettings {
     if !is_supported_language(&settings.language) {
         settings.language = settings.transcription_language.clone();
     }
+    if settings_file_existed && !app_language_present && is_supported_language(&settings.language) {
+        settings.app_language = settings.language.clone();
+    }
     if !is_supported_language(&settings.app_language) {
         settings.app_language = DEFAULT_APP_LANGUAGE.to_string();
     }
@@ -1013,6 +1084,7 @@ fn load_settings(app: &AppHandle) -> LoadedSettings {
         settings,
         settings_file_existed,
         onboarding_flag_present,
+        app_language_present,
     }
 }
 
@@ -1021,6 +1093,7 @@ fn load_or_create_settings(app: &AppHandle) -> ScribeSettings {
     let settings = loaded.settings;
     if !loaded.settings_file_existed
         || (loaded.settings_file_existed && !loaded.onboarding_flag_present)
+        || (loaded.settings_file_existed && !loaded.app_language_present)
     {
         if let Err(error) = save_settings_file(app, &settings) {
             eprintln!("Scribe settings: unable to persist settings: {error}");
@@ -1155,6 +1228,14 @@ fn emit_transcription_progress(
     );
 }
 
+fn summarize_process_output(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .take(30)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn copy_with_progress(
     app: &AppHandle,
     import_id: &str,
@@ -1225,6 +1306,10 @@ fn path_command_works(executable: &str, arg: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn allow_path_runtime_fallback() -> bool {
+    cfg!(debug_assertions) || std::env::var_os("SCRIBE_ALLOW_SYSTEM_RUNTIME_BINARIES").is_some()
+}
+
 fn runtime_target_triple() -> &'static str {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         "aarch64-apple-darwin"
@@ -1280,18 +1365,33 @@ fn resolve_runtime_binary(
     error: impl FnOnce() -> TranscriptionError,
 ) -> Result<PathBuf, TranscriptionError> {
     if let Some(candidate) = resolve_bundled_runtime_binary(app, base_name) {
+        eprintln!(
+            "Scribe runtime: probing bundled {base_name} at {} exists={} executable={}",
+            candidate.display(),
+            candidate.exists(),
+            is_executable(&candidate)
+        );
         if command_works(&candidate, probe_arg) {
             return Ok(candidate);
         }
     }
 
     if let Some(candidate) = resolve_app_data_runtime_binary(app, app_data_folder, base_name) {
+        eprintln!(
+            "Scribe runtime: probing app-data {base_name} at {} exists={} executable={}",
+            candidate.display(),
+            candidate.exists(),
+            is_executable(&candidate)
+        );
         if candidate.exists() && command_works(&candidate, probe_arg) {
             return Ok(candidate);
         }
     }
 
-    if path_command_works(&platform_executable_name(base_name), probe_arg) {
+    if allow_path_runtime_fallback()
+        && path_command_works(&platform_executable_name(base_name), probe_arg)
+    {
+        eprintln!("Scribe runtime: using PATH fallback for {base_name}");
         return Ok(PathBuf::from(platform_executable_name(base_name)));
     }
 
@@ -2650,20 +2750,44 @@ fn transcribe_recording_blocking(
         Some(metadata.duration_seconds),
     );
 
+    let ffmpeg_args = vec![
+        "-y".to_string(),
+        "-i".to_string(),
+        audio_path.to_string_lossy().to_string(),
+        "-ac".to_string(),
+        "1".to_string(),
+        "-ar".to_string(),
+        "16000".to_string(),
+        "-sample_fmt".to_string(),
+        "s16".to_string(),
+        processing_wav.to_string_lossy().to_string(),
+    ];
+    eprintln!(
+        "Scribe transcription: ffmpeg path={} exists={} executable={} args={:?} recording_id={} model_id={} audio_path={} processing_wav={}",
+        ffmpeg.display(),
+        ffmpeg.exists(),
+        is_executable(&ffmpeg),
+        ffmpeg_args,
+        recording_id,
+        settings.whisper_model,
+        audio_path.display(),
+        processing_wav.display()
+    );
     let conversion_output = Command::new(&ffmpeg)
-        .arg("-y")
-        .arg("-i")
-        .arg(&audio_path)
-        .args(["-ac", "1", "-ar", "16000", "-sample_fmt", "s16"])
-        .arg(&processing_wav)
+        .args(&ffmpeg_args)
         .output()
         .map_err(|error| {
             TranscriptionError::ConversionFailed(format!("Unable to start FFmpeg: {error}"))
         })?;
 
     if !conversion_output.status.success() {
-        let stderr = String::from_utf8_lossy(&conversion_output.stderr);
-        eprintln!("Scribe transcription: FFmpeg failed: {stderr}");
+        eprintln!(
+            "Scribe transcription: FFmpeg failed recording_id={} exit={:?} stdout={} stderr={}",
+            recording_id,
+            conversion_output.status.code(),
+            summarize_process_output(&conversion_output.stdout),
+            summarize_process_output(&conversion_output.stderr)
+        );
         return Err(TranscriptionError::ConversionFailed(
             "FFmpeg could not convert this recording.".to_string(),
         ));
@@ -2676,23 +2800,67 @@ fn transcribe_recording_blocking(
         Some(metadata.duration_seconds),
     );
 
-    let whisper_output = Command::new(&whisper_cli)
-        .arg("-m")
-        .arg(&model_path)
-        .arg("-f")
-        .arg(&processing_wav)
-        .arg("-l")
-        .arg(&transcription_language)
-        .args(["-fa", "-ojf", "-of"])
-        .arg(&whisper_output_prefix)
+    let whisper_args = vec![
+        "-m".to_string(),
+        model_path.to_string_lossy().to_string(),
+        "-f".to_string(),
+        processing_wav.to_string_lossy().to_string(),
+        "-l".to_string(),
+        transcription_language.clone(),
+        "-ojf".to_string(),
+        "-of".to_string(),
+        whisper_output_prefix.to_string_lossy().to_string(),
+    ];
+    eprintln!(
+        "Scribe transcription: whisper path={} exists={} executable={} args={:?} recording_id={} model_id={} audio_path={} processing_wav={}",
+        whisper_cli.display(),
+        whisper_cli.exists(),
+        is_executable(&whisper_cli),
+        whisper_args,
+        recording_id,
+        settings.whisper_model,
+        audio_path.display(),
+        processing_wav.display()
+    );
+    let mut whisper_output = Command::new(&whisper_cli)
+        .args(&whisper_args)
         .output()
         .map_err(|error| {
             TranscriptionError::WhisperFailed(format!("Unable to start whisper.cpp: {error}"))
         })?;
 
     if !whisper_output.status.success() {
-        let stderr = String::from_utf8_lossy(&whisper_output.stderr);
-        eprintln!("Scribe transcription: whisper.cpp failed: {stderr}");
+        eprintln!(
+            "Scribe transcription: whisper first attempt failed recording_id={} exit={:?} stdout={} stderr={}",
+            recording_id,
+            whisper_output.status.code(),
+            summarize_process_output(&whisper_output.stdout),
+            summarize_process_output(&whisper_output.stderr)
+        );
+        let mut cpu_args = whisper_args.clone();
+        cpu_args.insert(0, "-ng".to_string());
+        eprintln!(
+            "Scribe transcription: retrying whisper without GPU recording_id={} args={:?}",
+            recording_id, cpu_args
+        );
+        whisper_output = Command::new(&whisper_cli)
+            .args(&cpu_args)
+            .output()
+            .map_err(|error| {
+                TranscriptionError::WhisperFailed(format!(
+                    "Unable to start whisper.cpp CPU fallback: {error}"
+                ))
+            })?;
+    }
+
+    if !whisper_output.status.success() {
+        eprintln!(
+            "Scribe transcription: whisper failed recording_id={} exit={:?} stdout={} stderr={}",
+            recording_id,
+            whisper_output.status.code(),
+            summarize_process_output(&whisper_output.stdout),
+            summarize_process_output(&whisper_output.stderr)
+        );
         return Err(TranscriptionError::WhisperFailed(
             "whisper.cpp could not transcribe this recording.".to_string(),
         ));

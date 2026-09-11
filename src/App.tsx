@@ -35,6 +35,7 @@ import {
 } from "./components/RecordingWorkflow";
 import {
   HomeRecentRecordings,
+  localizedRecordingTitle,
   MoveToProjectDialog,
   ProjectDialog,
   ProjectDetailView,
@@ -182,6 +183,7 @@ function App() {
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingDismissedThisSession, setOnboardingDismissedThisSession] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState("General");
+  const [recordingSessionKey, setRecordingSessionKey] = useState(0);
 
   const currentNavEntry = useCallback((): NavEntry => ({
     view,
@@ -224,6 +226,22 @@ function App() {
     setHistory((stack) => {
       const previous = stack[stack.length - 1];
       if (previous) void applyNavEntry(previous);
+      return stack.slice(0, -1);
+    });
+  }, [applyNavEntry]);
+
+  const discardActiveRecording = useCallback(() => {
+    setFinalizing(false);
+    setRecording(null);
+    setTranscript(null);
+    setTranscriptionError(undefined);
+    setFinalizingProgress(null);
+    setRecordingProjectId(null);
+    setRecordingProjectName(null);
+    setRecordingSessionKey((current) => current + 1);
+    setHistory((stack) => {
+      const previous = stack[stack.length - 1] ?? { view: "home" as const };
+      void applyNavEntry(previous);
       return stack.slice(0, -1);
     });
   }, [applyNavEntry]);
@@ -493,6 +511,7 @@ function App() {
   }, [canGoBack, goBack]);
 
   async function transcribeRecording(nextRecording: RecordingMetadata) {
+    console.info("[transcription-ui] attempt start", { recordingId: nextRecording.id });
     activeRecordingProgressIdRef.current = nextRecording.id;
     activeImportProgressIdRef.current = null;
     setFinalizing(true);
@@ -526,9 +545,11 @@ function App() {
       return;
     }
     try {
+      console.info("[transcription-ui] invoking transcribe_recording", { recordingId: nextRecording.id });
       const nextTranscript = await invoke<TranscriptData>("transcribe_recording", {
         recordingId: nextRecording.id,
       });
+      console.info("[transcription-ui] transcribe_recording success", { recordingId: nextRecording.id });
       setTranscript(nextTranscript);
       activeRecordingProgressIdRef.current = null;
       setFinalizingProgress(null);
@@ -536,12 +557,13 @@ function App() {
       navigate({ view: "transcript", recordingId: nextRecording.id, projectId: recordingProjectId }, "replace");
       void refreshLibrary();
     } catch (reason) {
-      console.error("Scribe: transcription failed", reason);
+      console.error("[transcription-ui] transcribe_recording failed", { recordingId: nextRecording.id, reason });
       setTranscriptionError(classifyTranscriptionError(reason));
     }
   }
 
   function startRecording(projectId: string | null = null) {
+    setRecordingSessionKey((current) => current + 1);
     setFinalizing(false);
     setFinalizingProgress(null);
     activeRecordingProgressIdRef.current = null;
@@ -1031,6 +1053,7 @@ function App() {
           progress={finalizingProgress}
           t={t}
           onRetry={() => {
+            console.info("[transcription-ui] retry clicked", { recordingId: recording?.id ?? null });
             if (recording) void transcribeRecording(recording);
           }}
           retryDisabled={transcriptionError?.kind === "model_downloading" && selectedModelStillDownloading}
@@ -1045,15 +1068,19 @@ function App() {
             openTranscriptionSettings();
           }}
         /> : view === "recording" ? (
-          <RecordingView t={t} projectId={recordingProjectId} onStop={(nextRecording) => {
+          <RecordingView key={recordingSessionKey} t={t} projectId={recordingProjectId} onStop={(nextRecording) => {
             setRecording(nextRecording);
             setTranscript(null);
             void transcribeRecording(nextRecording);
-          }} onSaved={applySavedRecording} onDiscard={goBack} />
+          }} onSaved={applySavedRecording} onDiscard={discardActiveRecording} onStartNew={() => {
+            console.info("[recording-ui] start-new clicked from too-short state");
+            startRecording(recordingProjectId);
+          }} />
         ) : view === "transcript" && recording ? <TranscriptView
           recording={recording}
           transcript={transcript}
           t={t}
+          appLanguage={appLanguage}
           onRename={renameCurrentRecording}
           onMoveToProject={() => setMoveTarget({ recordingIds: [recording.id], projectId: recordingProjectId })}
           actions={activeRecordingSummary ? recordingActions(activeRecordingSummary, { includeOpen: false }) : undefined}
@@ -1080,6 +1107,7 @@ function App() {
         : view === "recordings" ? <RecordingsView
           recordings={recordings}
           t={t}
+          appLanguage={appLanguage}
           onOpenRecording={openRecording}
           onOpenArchived={() => navigate({ view: "archived-recordings" }, "push")}
           onMoveRecordings={(recordingIds) => setMoveTarget({ recordingIds, projectId: null })}
@@ -1094,6 +1122,7 @@ function App() {
         : view === "archived-recordings" ? <RecordingsView
           recordings={archivedRecordings}
           t={t}
+          appLanguage={appLanguage}
           onOpenRecording={openRecording}
           onMoveRecordings={(recordingIds) => setMoveTarget({ recordingIds, projectId: null })}
           onArchiveRecordings={archiveRecordings}
@@ -1109,6 +1138,7 @@ function App() {
           project={activeProject}
           recordings={projectRecordings}
           t={t}
+          appLanguage={appLanguage}
           onNewRecording={() => startRecording(activeProject.id)}
           onImportAudio={() => void importAudio(activeProject.id)}
           onOpenRecording={openRecording}
@@ -1193,6 +1223,7 @@ function App() {
           <HomeRecentRecordings
             recordings={recentRecordings}
             t={t}
+            appLanguage={appLanguage}
             onOpenRecording={openRecording}
             onViewAll={() => navigate({ view: "recordings" }, "top")}
             onMoveRecordings={(recordingIds) => setMoveTarget({ recordingIds, projectId: null })}
@@ -1235,7 +1266,7 @@ function App() {
         <RenameDialog
           title={t("renameRecording")}
           label={t("renameRecording")}
-          defaultValue={renameRecordingTarget.title}
+          defaultValue={localizedRecordingTitle(renameRecordingTarget.title, t)}
           t={t}
           onCancel={() => setRenameRecordingTarget(null)}
           onSubmit={(name) => void renameRecordingFromDialog(renameRecordingTarget, name)}

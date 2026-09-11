@@ -13,6 +13,19 @@ export const languages = [
 
 export type AppLanguage = typeof languages[number]["code"];
 
+export const languageLocales: Record<AppLanguage, string> = {
+  sl: "sl-SI",
+  en: "en-US",
+  de: "de-DE",
+  es: "es-ES",
+  it: "it-IT",
+  hr: "hr-HR",
+  fr: "fr-FR",
+  pt: "pt-PT",
+  nl: "nl-NL",
+  pl: "pl-PL",
+};
+
 type Dictionary = typeof en;
 export type TranslationKey = keyof Dictionary;
 export type TFunction = (key: TranslationKey) => string;
@@ -67,6 +80,8 @@ const en = {
   discardRecordingTitle: "Discard recording?",
   discardRecordingCopy: "This recording has not been saved and will be permanently discarded.",
   saveFailed: "Scribe couldn't save this recording.",
+  recordingTooShort: "Recording is too short.",
+  startNewRecording: "Start a new recording",
   savingRecording: "Saving recording...",
   tryAgain: "Try again",
   finalizingTranscript: "Finalizing transcript...",
@@ -297,24 +312,109 @@ const modelRecoveryTranslations: Record<Exclude<AppLanguage, "en">, Partial<Dict
 };
 
 const reliabilityTranslations: Record<Exclude<AppLanguage, "en">, Partial<Dictionary>> = {
-  sl: { importUnsupported: "Ta zvočna oblika ni podprta.", importSourceMissing: "Izbrane zvočne datoteke ni bilo mogoče najti.", importInspectFailed: "Scribe je datoteko kopiral, vendar ni mogel prebrati njenih zvočnih podatkov.", transcriptionModelReadyTitle: "Model za prepisovanje je pripravljen", transcriptionModelReadyCopy: "Model se je prenesel. Ko ste pripravljeni, znova poskusite prepis.", newRecordingTitle: "Nov posnetek", audioPlayer: "Predvajalnik zvoka", playRecording: "Predvajaj posnetek", pauseRecording: "Premor posnetka", playbackPosition: "Položaj predvajanja", recordingContent: "Vsebina posnetka", elapsedTime: "Pretečeni čas", microphoneUnavailableDetail: "Dostop do mikrofona ni na voljo.", microphonePermissionDetail: "Dostop do mikrofona je bil zavrnjen. Omogočite dostop za Scribe v sistemskih nastavitvah.", microphoneDisconnectedDetail: "Mikrofon se je odklopil. Za ponovno povezavo začnite novo snemanje." },
-  de: { importUnsupported: "Dieses Audioformat wird nicht unterstützt.", importSourceMissing: "Die ausgewählte Audiodatei wurde nicht gefunden.", importInspectFailed: "Scribe hat die Datei kopiert, konnte die Audiodetails aber nicht lesen.", transcriptionModelReadyTitle: "Transkriptionsmodell ist bereit", transcriptionModelReadyCopy: "Das Modell wurde heruntergeladen. Starten Sie die Transkription erneut, wenn Sie bereit sind.", newRecordingTitle: "Neue Aufnahme", audioPlayer: "Audioplayer", playRecording: "Aufnahme abspielen", pauseRecording: "Aufnahme pausieren", playbackPosition: "Wiedergabeposition", recordingContent: "Aufnahmeinhalt", elapsedTime: "Verstrichene Zeit", microphoneUnavailableDetail: "Mikrofonzugriff ist nicht verfügbar.", microphonePermissionDetail: "Mikrofonzugriff wurde verweigert. Aktivieren Sie den Zugriff für Scribe in den Systemeinstellungen.", microphoneDisconnectedDetail: "Das Mikrofon wurde getrennt. Starten Sie eine neue Aufnahme, um es erneut zu verbinden." },
-  es: { importUnsupported: "Este formato de audio no es compatible.", importSourceMissing: "No se encontró el archivo de audio seleccionado.", importInspectFailed: "Scribe copió el archivo, pero no pudo leer sus detalles de audio.", transcriptionModelReadyTitle: "El modelo de transcripción está listo", transcriptionModelReadyCopy: "El modelo terminó de descargarse. Reintenta la transcripción cuando quieras.", newRecordingTitle: "Nueva grabación", audioPlayer: "Reproductor de audio", playRecording: "Reproducir grabación", pauseRecording: "Pausar grabación", playbackPosition: "Posición de reproducción", recordingContent: "Contenido de la grabación", elapsedTime: "Tiempo transcurrido", microphoneUnavailableDetail: "El acceso al micrófono no está disponible.", microphonePermissionDetail: "Se denegó el acceso al micrófono. Activa el acceso para Scribe en los ajustes del sistema.", microphoneDisconnectedDetail: "El micrófono se desconectó. Inicia una nueva grabación para volver a conectarlo." },
-  it: { importUnsupported: "Questo formato audio non è supportato.", importSourceMissing: "Il file audio selezionato non è stato trovato.", importInspectFailed: "Scribe ha copiato il file, ma non ha potuto leggere i dettagli audio.", transcriptionModelReadyTitle: "Il modello di trascrizione è pronto", transcriptionModelReadyCopy: "Il modello ha finito il download. Riprova la trascrizione quando vuoi.", newRecordingTitle: "Nuova registrazione", audioPlayer: "Lettore audio", playRecording: "Riproduci registrazione", pauseRecording: "Metti in pausa registrazione", playbackPosition: "Posizione di riproduzione", recordingContent: "Contenuto registrazione", elapsedTime: "Tempo trascorso", microphoneUnavailableDetail: "L'accesso al microfono non è disponibile.", microphonePermissionDetail: "L'accesso al microfono è stato negato. Abilita l'accesso per Scribe nelle impostazioni di sistema.", microphoneDisconnectedDetail: "Il microfono si è scollegato. Avvia una nuova registrazione per riconnetterlo." },
-  hr: { importUnsupported: "Ovaj audio format nije podržan.", importSourceMissing: "Odabrana audio datoteka nije pronađena.", importInspectFailed: "Scribe je kopirao datoteku, ali nije mogao pročitati njezine audio podatke.", transcriptionModelReadyTitle: "Model transkripcije je spreman", transcriptionModelReadyCopy: "Model je preuzet. Ponovno pokrenite transkripciju kada budete spremni.", newRecordingTitle: "Nova snimka", audioPlayer: "Audio reproduktor", playRecording: "Reproduciraj snimku", pauseRecording: "Pauziraj snimku", playbackPosition: "Položaj reprodukcije", recordingContent: "Sadržaj snimke", elapsedTime: "Proteklo vrijeme", microphoneUnavailableDetail: "Pristup mikrofonu nije dostupan.", microphonePermissionDetail: "Pristup mikrofonu je odbijen. Omogućite pristup za Scribe u postavkama sustava.", microphoneDisconnectedDetail: "Mikrofon je odspojen. Pokrenite novu snimku za ponovno povezivanje." },
-  fr: { importUnsupported: "Ce format audio n'est pas pris en charge.", importSourceMissing: "Le fichier audio sélectionné est introuvable.", importInspectFailed: "Scribe a copié le fichier, mais n'a pas pu lire ses détails audio.", transcriptionModelReadyTitle: "Le modèle de transcription est prêt", transcriptionModelReadyCopy: "Le modèle a fini de se télécharger. Relancez la transcription quand vous êtes prêt.", newRecordingTitle: "Nouvel enregistrement", audioPlayer: "Lecteur audio", playRecording: "Lire l'enregistrement", pauseRecording: "Mettre l'enregistrement en pause", playbackPosition: "Position de lecture", recordingContent: "Contenu de l'enregistrement", elapsedTime: "Temps écoulé", microphoneUnavailableDetail: "L'accès au microphone n'est pas disponible.", microphonePermissionDetail: "L'accès au microphone a été refusé. Activez l'accès pour Scribe dans les réglages système.", microphoneDisconnectedDetail: "Le microphone s'est déconnecté. Lancez un nouvel enregistrement pour le reconnecter." },
-  pt: { importUnsupported: "Este formato de áudio não é suportado.", importSourceMissing: "O ficheiro de áudio selecionado não foi encontrado.", importInspectFailed: "O Scribe copiou o ficheiro, mas não conseguiu ler os detalhes de áudio.", transcriptionModelReadyTitle: "O modelo de transcrição está pronto", transcriptionModelReadyCopy: "O modelo terminou a transferência. Tente transcrever novamente quando quiser.", newRecordingTitle: "Nova gravação", audioPlayer: "Leitor de áudio", playRecording: "Reproduzir gravação", pauseRecording: "Pausar gravação", playbackPosition: "Posição de reprodução", recordingContent: "Conteúdo da gravação", elapsedTime: "Tempo decorrido", microphoneUnavailableDetail: "O acesso ao microfone não está disponível.", microphonePermissionDetail: "O acesso ao microfone foi recusado. Ative o acesso para o Scribe nas definições do sistema.", microphoneDisconnectedDetail: "O microfone foi desligado. Inicie uma nova gravação para voltar a ligar." },
-  nl: { importUnsupported: "Deze audio-indeling wordt niet ondersteund.", importSourceMissing: "Het geselecteerde audiobestand is niet gevonden.", importInspectFailed: "Scribe heeft het bestand gekopieerd, maar kon de audiogegevens niet lezen.", transcriptionModelReadyTitle: "Transcriptiemodel is klaar", transcriptionModelReadyCopy: "Het model is gedownload. Probeer de transcriptie opnieuw wanneer u klaar bent.", newRecordingTitle: "Nieuwe opname", audioPlayer: "Audiospeler", playRecording: "Opname afspelen", pauseRecording: "Opname pauzeren", playbackPosition: "Afspeelpositie", recordingContent: "Opname-inhoud", elapsedTime: "Verstreken tijd", microphoneUnavailableDetail: "Microfoontoegang is niet beschikbaar.", microphonePermissionDetail: "Microfoontoegang is geweigerd. Schakel toegang voor Scribe in via de systeeminstellingen.", microphoneDisconnectedDetail: "De microfoon is losgekoppeld. Start een nieuwe opname om opnieuw te verbinden." },
-  pl: { importUnsupported: "Ten format audio nie jest obsługiwany.", importSourceMissing: "Nie znaleziono wybranego pliku audio.", importInspectFailed: "Scribe skopiował plik, ale nie mógł odczytać jego danych audio.", transcriptionModelReadyTitle: "Model transkrypcji jest gotowy", transcriptionModelReadyCopy: "Model zakończył pobieranie. Ponów transkrypcję, gdy będziesz gotów.", newRecordingTitle: "Nowe nagranie", audioPlayer: "Odtwarzacz audio", playRecording: "Odtwórz nagranie", pauseRecording: "Wstrzymaj nagranie", playbackPosition: "Pozycja odtwarzania", recordingContent: "Zawartość nagrania", elapsedTime: "Czas trwania", microphoneUnavailableDetail: "Dostęp do mikrofonu jest niedostępny.", microphonePermissionDetail: "Odmówiono dostępu do mikrofonu. Włącz dostęp dla Scribe w ustawieniach systemu.", microphoneDisconnectedDetail: "Mikrofon został odłączony. Rozpocznij nowe nagranie, aby połączyć go ponownie." },
+  sl: { importUnsupported: "Ta zvočna oblika ni podprta.", importSourceMissing: "Izbrane zvočne datoteke ni bilo mogoče najti.", importInspectFailed: "Scribe je datoteko kopiral, vendar ni mogel prebrati njenih zvočnih podatkov.", transcriptionModelReadyTitle: "Model za prepisovanje je pripravljen", transcriptionModelReadyCopy: "Model se je prenesel. Ko ste pripravljeni, znova poskusite prepis.", newRecordingTitle: "Nov posnetek", audioPlayer: "Predvajalnik zvoka", playRecording: "Predvajaj posnetek", pauseRecording: "Premor posnetka", playbackPosition: "Položaj predvajanja", recordingContent: "Vsebina posnetka", elapsedTime: "Pretečeni čas", microphoneUnavailableDetail: "Dostop do mikrofona ni na voljo.", microphonePermissionDetail: "Dostop do mikrofona je bil zavrnjen. Omogočite dostop za Scribe v sistemskih nastavitvah.", microphoneDisconnectedDetail: "Mikrofon se je odklopil. Za ponovno povezavo začnite novo snemanje.", recordingTooShort: "Posnetek je prekratek.", startNewRecording: "Začni nov posnetek" },
+  de: { importUnsupported: "Dieses Audioformat wird nicht unterstützt.", importSourceMissing: "Die ausgewählte Audiodatei wurde nicht gefunden.", importInspectFailed: "Scribe hat die Datei kopiert, konnte die Audiodetails aber nicht lesen.", transcriptionModelReadyTitle: "Transkriptionsmodell ist bereit", transcriptionModelReadyCopy: "Das Modell wurde heruntergeladen. Starten Sie die Transkription erneut, wenn Sie bereit sind.", newRecordingTitle: "Neue Aufnahme", audioPlayer: "Audioplayer", playRecording: "Aufnahme abspielen", pauseRecording: "Aufnahme pausieren", playbackPosition: "Wiedergabeposition", recordingContent: "Aufnahmeinhalt", elapsedTime: "Verstrichene Zeit", microphoneUnavailableDetail: "Mikrofonzugriff ist nicht verfügbar.", microphonePermissionDetail: "Mikrofonzugriff wurde verweigert. Aktivieren Sie den Zugriff für Scribe in den Systemeinstellungen.", microphoneDisconnectedDetail: "Das Mikrofon wurde getrennt. Starten Sie eine neue Aufnahme, um es erneut zu verbinden.", recordingTooShort: "Die Aufnahme ist zu kurz.", startNewRecording: "Neue Aufnahme starten" },
+  es: { importUnsupported: "Este formato de audio no es compatible.", importSourceMissing: "No se encontró el archivo de audio seleccionado.", importInspectFailed: "Scribe copió el archivo, pero no pudo leer sus detalles de audio.", transcriptionModelReadyTitle: "El modelo de transcripción está listo", transcriptionModelReadyCopy: "El modelo terminó de descargarse. Reintenta la transcripción cuando quieras.", newRecordingTitle: "Nueva grabación", audioPlayer: "Reproductor de audio", playRecording: "Reproducir grabación", pauseRecording: "Pausar grabación", playbackPosition: "Posición de reproducción", recordingContent: "Contenido de la grabación", elapsedTime: "Tiempo transcurrido", microphoneUnavailableDetail: "El acceso al micrófono no está disponible.", microphonePermissionDetail: "Se denegó el acceso al micrófono. Activa el acceso para Scribe en los ajustes del sistema.", microphoneDisconnectedDetail: "El micrófono se desconectó. Inicia una nueva grabación para volver a conectarlo.", recordingTooShort: "La grabación es demasiado corta.", startNewRecording: "Iniciar una nueva grabación" },
+  it: { importUnsupported: "Questo formato audio non è supportato.", importSourceMissing: "Il file audio selezionato non è stato trovato.", importInspectFailed: "Scribe ha copiato il file, ma non ha potuto leggere i dettagli audio.", transcriptionModelReadyTitle: "Il modello di trascrizione è pronto", transcriptionModelReadyCopy: "Il modello ha finito il download. Riprova la trascrizione quando vuoi.", newRecordingTitle: "Nuova registrazione", audioPlayer: "Lettore audio", playRecording: "Riproduci registrazione", pauseRecording: "Metti in pausa registrazione", playbackPosition: "Posizione di riproduzione", recordingContent: "Contenuto registrazione", elapsedTime: "Tempo trascorso", microphoneUnavailableDetail: "L'accesso al microfono non è disponibile.", microphonePermissionDetail: "L'accesso al microfono è stato negato. Abilita l'accesso per Scribe nelle impostazioni di sistema.", microphoneDisconnectedDetail: "Il microfono si è scollegato. Avvia una nuova registrazione per riconnetterlo.", recordingTooShort: "La registrazione è troppo breve.", startNewRecording: "Avvia una nuova registrazione" },
+  hr: { importUnsupported: "Ovaj audio format nije podržan.", importSourceMissing: "Odabrana audio datoteka nije pronađena.", importInspectFailed: "Scribe je kopirao datoteku, ali nije mogao pročitati njezine audio podatke.", transcriptionModelReadyTitle: "Model transkripcije je spreman", transcriptionModelReadyCopy: "Model je preuzet. Ponovno pokrenite transkripciju kada budete spremni.", newRecordingTitle: "Nova snimka", audioPlayer: "Audio reproduktor", playRecording: "Reproduciraj snimku", pauseRecording: "Pauziraj snimku", playbackPosition: "Položaj reprodukcije", recordingContent: "Sadržaj snimke", elapsedTime: "Proteklo vrijeme", microphoneUnavailableDetail: "Pristup mikrofonu nije dostupan.", microphonePermissionDetail: "Pristup mikrofonu je odbijen. Omogućite pristup za Scribe u postavkama sustava.", microphoneDisconnectedDetail: "Mikrofon je odspojen. Pokrenite novu snimku za ponovno povezivanje.", recordingTooShort: "Snimka je prekratka.", startNewRecording: "Pokreni novu snimku" },
+  fr: { importUnsupported: "Ce format audio n'est pas pris en charge.", importSourceMissing: "Le fichier audio sélectionné est introuvable.", importInspectFailed: "Scribe a copié le fichier, mais n'a pas pu lire ses détails audio.", transcriptionModelReadyTitle: "Le modèle de transcription est prêt", transcriptionModelReadyCopy: "Le modèle a fini de se télécharger. Relancez la transcription quand vous êtes prêt.", newRecordingTitle: "Nouvel enregistrement", audioPlayer: "Lecteur audio", playRecording: "Lire l'enregistrement", pauseRecording: "Mettre l'enregistrement en pause", playbackPosition: "Position de lecture", recordingContent: "Contenu de l'enregistrement", elapsedTime: "Temps écoulé", microphoneUnavailableDetail: "L'accès au microphone n'est pas disponible.", microphonePermissionDetail: "L'accès au microphone a été refusé. Activez l'accès pour Scribe dans les réglages système.", microphoneDisconnectedDetail: "Le microphone s'est déconnecté. Lancez un nouvel enregistrement pour le reconnecter.", recordingTooShort: "L'enregistrement est trop court.", startNewRecording: "Démarrer un nouvel enregistrement" },
+  pt: { importUnsupported: "Este formato de áudio não é suportado.", importSourceMissing: "O ficheiro de áudio selecionado não foi encontrado.", importInspectFailed: "O Scribe copiou o ficheiro, mas não conseguiu ler os detalhes de áudio.", transcriptionModelReadyTitle: "O modelo de transcrição está pronto", transcriptionModelReadyCopy: "O modelo terminou a transferência. Tente transcrever novamente quando quiser.", newRecordingTitle: "Nova gravação", audioPlayer: "Leitor de áudio", playRecording: "Reproduzir gravação", pauseRecording: "Pausar gravação", playbackPosition: "Posição de reprodução", recordingContent: "Conteúdo da gravação", elapsedTime: "Tempo decorrido", microphoneUnavailableDetail: "O acesso ao microfone não está disponível.", microphonePermissionDetail: "O acesso ao microfone foi recusado. Ative o acesso para o Scribe nas definições do sistema.", microphoneDisconnectedDetail: "O microfone foi desligado. Inicie uma nova gravação para voltar a ligar.", recordingTooShort: "A gravação é demasiado curta.", startNewRecording: "Iniciar nova gravação" },
+  nl: { importUnsupported: "Deze audio-indeling wordt niet ondersteund.", importSourceMissing: "Het geselecteerde audiobestand is niet gevonden.", importInspectFailed: "Scribe heeft het bestand gekopieerd, maar kon de audiogegevens niet lezen.", transcriptionModelReadyTitle: "Transcriptiemodel is klaar", transcriptionModelReadyCopy: "Het model is gedownload. Probeer de transcriptie opnieuw wanneer u klaar bent.", newRecordingTitle: "Nieuwe opname", audioPlayer: "Audiospeler", playRecording: "Opname afspelen", pauseRecording: "Opname pauzeren", playbackPosition: "Afspeelpositie", recordingContent: "Opname-inhoud", elapsedTime: "Verstreken tijd", microphoneUnavailableDetail: "Microfoontoegang is niet beschikbaar.", microphonePermissionDetail: "Microfoontoegang is geweigerd. Schakel toegang voor Scribe in via de systeeminstellingen.", microphoneDisconnectedDetail: "De microfoon is losgekoppeld. Start een nieuwe opname om opnieuw te verbinden.", recordingTooShort: "De opname is te kort.", startNewRecording: "Nieuwe opname starten" },
+  pl: { importUnsupported: "Ten format audio nie jest obsługiwany.", importSourceMissing: "Nie znaleziono wybranego pliku audio.", importInspectFailed: "Scribe skopiował plik, ale nie mógł odczytać jego danych audio.", transcriptionModelReadyTitle: "Model transkrypcji jest gotowy", transcriptionModelReadyCopy: "Model zakończył pobieranie. Ponów transkrypcję, gdy będziesz gotów.", newRecordingTitle: "Nowe nagranie", audioPlayer: "Odtwarzacz audio", playRecording: "Odtwórz nagranie", pauseRecording: "Wstrzymaj nagranie", playbackPosition: "Pozycja odtwarzania", recordingContent: "Zawartość nagrania", elapsedTime: "Czas trwania", microphoneUnavailableDetail: "Dostęp do mikrofonu jest niedostępny.", microphonePermissionDetail: "Odmówiono dostępu do mikrofonu. Włącz dostęp dla Scribe w ustawieniach systemu.", microphoneDisconnectedDetail: "Mikrofon został odłączony. Rozpocznij nowe nagranie, aby połączyć go ponownie.", recordingTooShort: "Nagranie jest za krótkie.", startNewRecording: "Rozpocznij nowe nagranie" },
+};
+
+const slovenianCompletionTranslations: Partial<Dictionary> = {
+  archive: "Arhiviraj",
+  archiveFailed: "Posnetka ni bilo mogoče arhivirati.",
+  archived: "Arhivirano",
+  cancelDownload: "Prekliči prenos",
+  cancelDownloadFailed: "Prenosa ni bilo mogoče preklicati.",
+  checkForUpdates: "Preveri posodobitve",
+  checkingForUpdates: "Preverjanje posodobitev...",
+  chooseTranscriptionModel: "Izberite model za prepisovanje",
+  couldntCheckForUpdates: "Posodobitev ni bilo mogoče preveriti",
+  couldntInstallUpdate: "Posodobitve ni bilo mogoče namestiti.",
+  deletePermanently: "Trajno izbriši",
+  deleteRecording: "Izbriši posnetek",
+  deleteRecordingConfirmCopy: "To trajno izbriše posnetek, zvok in prepis. Tega ni mogoče razveljaviti.",
+  deleteRecordingConfirmTitle: "Izbrisati posnetek?",
+  deleteRecordings: "Izbriši posnetke",
+  deleteRecordingsConfirmCopy: "To trajno izbriše izbrane posnetke, zvok in prepise. Tega ni mogoče razveljaviti.",
+  deleteRecordingsConfirmTitle: "Izbrisati {count} posnetkov?",
+  deleteProjectConfirmCopy: "Posnetki v tem projektu ne bodo izbrisani.",
+  deleteProjectConfirmTitle: "Izbrisati projekt?",
+  deleteProjectsConfirmCopy: "Posnetki v teh projektih ne bodo izbrisani.",
+  deleteProjectsConfirmTitle: "Izbrisati {count} projektov?",
+  deleteSelectedModelDisabled: "Pred izbrisom tega modela izberite drug nameščen model.",
+  deleting: "Brisanje...",
+  deselect: "Prekliči izbiro",
+  discard: "Zavrzi",
+  discardRecordingCopy: "Ta posnetek ni bil shranjen in bo trajno zavržen.",
+  discardRecordingTitle: "Zavreči posnetek?",
+  downloadAndContinue: "Prenesi in nadaljuj",
+  downloadingUpdate: "Prenašanje posodobitve...",
+  importFailed: "Te zvočne datoteke ni bilo mogoče uvoziti.",
+  importingAudio: "Uvažanje zvoka...",
+  installingUpdate: "Nameščanje posodobitve...",
+  installingModel: "Nameščanje modela...",
+  later: "Pozneje",
+  ok: "V redu",
+  of: "od",
+  onboardingLanguagesCopy: "Nastavite jezik aplikacije in jezik, ki ga običajno prepisujete.",
+  onboardingLocalTranscription: "Prepisujte lokalno v svoji napravi",
+  onboardingModelCopy: "Scribe lahko uporabljate, medtem ko se model prenaša v ozadju.",
+  onboardingPrivateRecordings: "Vaši posnetki ostanejo v računalniku",
+  onboardingRecordImport: "Snemajte ali uvozite zvok",
+  onboardingWelcomeCopy: "Snemajte, uvažajte in prepisujte zvok v lokalnem delovnem prostoru.",
+  preparingAudio: "Pripravljanje zvoka...",
+  projectDeleteFailed: "Tega projekta ni bilo mogoče izbrisati.",
+  queued: "V čakalni vrsti",
+  recordingDeleteFailed: "Tega posnetka ni bilo mogoče izbrisati.",
+  recordingsDeleteFailed: "Izbranih posnetkov ni bilo mogoče izbrisati.",
+  restartAndUpdate: "Znova zaženi in posodobi",
+  restore: "Obnovi",
+  restoreFailed: "Posnetka ni bilo mogoče obnoviti.",
+  restoreRecording: "Obnovi posnetek",
+  secureUpdates: "Varne podpisane posodobitve se preverjajo samodejno.",
+  select: "Izberi",
+  selectAll: "Izberi vse",
+  selected: "izbrano",
+  showWelcomeGuide: "Prikaži uvodni vodič",
+  showWelcomeGuideCopy: "Znova odpri začetni vodič za nastavitev.",
+  skipForNow: "Preskoči za zdaj",
+  someRecordingsDeleteFailed: "Nekaterih posnetkov ni bilo mogoče izbrisati.",
+  thisCannotBeUndone: "Tega ni mogoče razveljaviti.",
+  transcribing: "Prepisovanje...",
+  updateAvailable: "Posodobitev je na voljo",
+  updateAvailableCopy: "Podpisana posodobitev je pripravljena za prenos in namestitev.",
+  updateAvailableTitle: "Scribe {version} je na voljo",
+  updateCheckFailedCopy: "Preverite internetno povezavo in poskusite znova.",
+  updateNow: "Posodobi zdaj",
+  updateReady: "Pripravljeno za ponovni zagon",
+  updateReadyCopy: "Posodobitev je nameščena. Za dokončanje znova zaženite Scribe.",
+  upToDate: "Scribe je posodobljen.",
+  version: "Različica",
+  welcomeToScribe: "Dobrodošli v Scribe",
 };
 
 for (const language of languages) {
   if (language.code !== "en") Object.assign(dictionaries[language.code], v01ProgressTranslations[language.code], onboardingTranslations[language.code], modelRecoveryTranslations[language.code], reliabilityTranslations[language.code]);
 }
 
+Object.assign(dictionaries.sl, slovenianCompletionTranslations);
+
 export function createTranslator(language: string): TFunction {
   const dictionary = dictionaries[language as AppLanguage] ?? dictionaries.en;
-  return (key) => dictionary[key] ?? dictionaries.en[key] ?? "";
+  return (key) => {
+    const value = dictionary[key];
+    if (value === undefined || value === "") {
+      if (import.meta.env.DEV) {
+        console.error(`Scribe i18n: missing translation '${key}' for '${language}'`);
+      }
+      return dictionaries.en[key] ?? "";
+    }
+    return value;
+  };
 }
 
 export function currentGreetingKey(): TranslationKey {

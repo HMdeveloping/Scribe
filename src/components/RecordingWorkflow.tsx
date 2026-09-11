@@ -7,8 +7,9 @@ import { useAudioPlayer } from "../hooks/useAudioPlayer";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { useMicrophoneLevel } from "../hooks/useMicrophoneLevel";
 import type { TFunction } from "../i18n";
+import type { AppLanguage } from "../i18n";
 import type { ContextMenuAction } from "./ContextMenu";
-import { formatRecordingDate } from "./LibraryViews";
+import { formatRecordingDateTime, localizedRecordingTitle } from "./LibraryViews";
 
 export function formatDuration(milliseconds: number) {
   const seconds = Math.floor(milliseconds / 1000);
@@ -58,9 +59,9 @@ type SaveRecordingResult = {
   };
 };
 
-type RecordingPhase = "recording" | "paused" | "stopping" | "save-error" | "discarding";
+type RecordingPhase = "recording" | "paused" | "stopping" | "save-error" | "too-short" | "discarding";
 
-export function RecordingView({ onStop, onSaved, onDiscard, t, projectId }: { onStop: (metadata: RecordingMetadata) => void; onSaved: (details: SaveRecordingResult["details"]) => void; onDiscard: () => void; t: TFunction; projectId?: string | null }) {
+export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, projectId }: { onStop: (metadata: RecordingMetadata) => void; onSaved: (details: SaveRecordingResult["details"]) => void; onDiscard: () => void; onStartNew: () => void; t: TFunction; projectId?: string | null }) {
   const [phase, setPhase] = useState<RecordingPhase>("recording");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [pendingSave, setPendingSave] = useState<{ blob: Blob; metadata: RecordingMetadata } | null>(null);
@@ -68,6 +69,7 @@ export function RecordingView({ onStop, onSaved, onDiscard, t, projectId }: { on
   const isPaused = phase === "paused";
   const isStopping = phase === "stopping";
   const isSaveError = phase === "save-error";
+  const isTooShort = phase === "too-short";
   const isCaptureActive = phase === "recording" || phase === "paused";
   const microphone = useMicrophoneLevel(isPaused || !isCaptureActive);
   const recorder = useAudioRecorder(microphone.stream, isPaused || !isCaptureActive);
@@ -183,7 +185,9 @@ export function RecordingView({ onStop, onSaved, onDiscard, t, projectId }: { on
       microphone.stop();
       if (blob.size <= 0) {
         console.error("Scribe: MediaRecorder finalized an empty Blob", { mimeType: blob.type || recorder.mimeType });
-        throw new Error("empty-recording-blob");
+        setPendingSave(null);
+        setPhase("too-short");
+        return;
       }
       const metadata: RecordingMetadata = {
         version: 1,
@@ -253,7 +257,8 @@ export function RecordingView({ onStop, onSaved, onDiscard, t, projectId }: { on
         ))}
       </div>
       <p className={`recording-status${microphone.status === "active" && phase === "recording" ? " is-listening" : ""}`} role="status">
-        <span />{isSaveError ? t("saveFailed")
+        <span />{isTooShort ? t("recordingTooShort")
+          : isSaveError ? t("saveFailed")
           : recorder.status === "error" ? t("recorderError")
           : isStopping ? t("savingRecording")
           : microphone.status === "error" ? t(microphone.error || "microphoneError")
@@ -263,6 +268,11 @@ export function RecordingView({ onStop, onSaved, onDiscard, t, projectId }: { on
       {isSaveError ? (
         <button className="retry-save-control" onClick={retrySave} disabled={!pendingSave}>
           {t("tryAgain")}
+        </button>
+      ) : null}
+      {isTooShort ? (
+        <button className="retry-save-control" onClick={onStartNew}>
+          {t("startNewRecording")}
         </button>
       ) : null}
       <div className="live-transcript">
@@ -643,6 +653,7 @@ export function TranscriptView({
   recording,
   transcript,
   t,
+  appLanguage,
   onRename,
   onMoveToProject,
   actions,
@@ -654,6 +665,7 @@ export function TranscriptView({
   recording: RecordingMetadata;
   transcript: TranscriptData | null;
   t: TFunction;
+  appLanguage: AppLanguage;
   onRename?: (title: string) => Promise<void> | void;
   onMoveToProject?: () => void;
   actions?: ContextMenuAction[];
@@ -756,7 +768,7 @@ export function TranscriptView({
               disabled={!onRename}
               title={onRename ? t("renameRecording") : undefined}
             >
-            <h1>{recording.title}</h1>
+            <h1>{localizedRecordingTitle(recording.title, t)}</h1>
             </button>
           )}
             {onRename || onMoveToProject || (actions && actions.length > 0) ? (
@@ -800,7 +812,7 @@ export function TranscriptView({
             ) : null}
           </div>
         <p className="transcript-metadata">
-          {formatRecordingDate(recording.createdAt)} <span aria-hidden="true">·</span> {formatDuration(recording.durationSeconds * 1000)} <span aria-hidden="true">·</span> {t("slovenian")}
+          {formatRecordingDateTime(recording.createdAt, appLanguage)} <span aria-hidden="true">·</span> {formatDuration(recording.durationSeconds * 1000)} <span aria-hidden="true">·</span> {t("slovenian")}
           {projectName ? <><span aria-hidden="true">·</span> {projectName}</> : null}
         </p>
       </header>

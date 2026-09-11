@@ -53,6 +53,7 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
+src-tauri/resources/bin/*/
 
 # Keep checked-in Tauri icon assets visible despite binary ignores.
 !src-tauri/icons/*.ico
