@@ -203,6 +203,8 @@ pub struct ScribeSettings {
     app_language: String,
     #[serde(default = "default_onboarding_completed")]
     onboarding_completed: bool,
+    #[serde(default)]
+    last_seen_whats_new_version: Option<String>,
     #[serde(flatten)]
     extra: BTreeMap<String, Value>,
 }
@@ -233,6 +235,7 @@ pub struct WhisperModelOption {
 pub struct SettingsViewData {
     settings: ScribeSettings,
     models: Vec<WhisperModelOption>,
+    settings_file_existed: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -978,6 +981,7 @@ fn default_settings() -> ScribeSettings {
         language: DEFAULT_TRANSCRIPTION_LANGUAGE.to_string(),
         app_language: DEFAULT_APP_LANGUAGE.to_string(),
         onboarding_completed: false,
+        last_seen_whats_new_version: None,
         extra: BTreeMap::new(),
     }
 }
@@ -2490,10 +2494,18 @@ pub fn get_transcription_config(app: AppHandle) -> Result<TranscriptionConfig, S
 
 #[tauri::command]
 pub fn load_scribe_settings(app: AppHandle) -> Result<SettingsViewData, String> {
-    let settings = load_or_create_settings(&app);
+    let loaded = load_settings(&app);
+    let settings = loaded.settings;
+    if !loaded.settings_file_existed
+        || !loaded.onboarding_flag_present
+        || !loaded.app_language_present
+    {
+        save_settings_file(&app, &settings)?;
+    }
     Ok(SettingsViewData {
         models: model_options(&app, &settings)?,
         settings,
+        settings_file_existed: loaded.settings_file_existed,
     })
 }
 
@@ -2504,8 +2516,11 @@ pub fn save_scribe_settings(
     app_language: Option<String>,
     transcription_language: Option<String>,
     onboarding_completed: Option<bool>,
+    last_seen_whats_new_version: Option<String>,
 ) -> Result<SettingsViewData, String> {
-    let mut settings = load_or_create_settings(&app);
+    let loaded = load_settings(&app);
+    let settings_file_existed = loaded.settings_file_existed;
+    let mut settings = loaded.settings;
     settings.version = 1;
     if let Some(model_id) = whisper_model {
         if !WHISPER_MODELS.iter().any(|model| model.id == model_id) {
@@ -2529,11 +2544,15 @@ pub fn save_scribe_settings(
     if let Some(completed) = onboarding_completed {
         settings.onboarding_completed = completed;
     }
+    if let Some(version) = last_seen_whats_new_version {
+        settings.last_seen_whats_new_version = Some(version);
+    }
     save_settings_file(&app, &settings)?;
 
     Ok(SettingsViewData {
         models: model_options(&app, &settings)?,
         settings,
+        settings_file_existed,
     })
 }
 
@@ -2677,6 +2696,7 @@ pub fn delete_whisper_model(app: AppHandle, model_id: String) -> Result<Settings
     Ok(SettingsViewData {
         models: model_options(&app, &settings)?,
         settings,
+        settings_file_existed: true,
     })
 }
 

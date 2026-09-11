@@ -23,11 +23,13 @@ export type ScribeSettings = {
   language: AppLanguage;
   appLanguage: AppLanguage;
   onboardingCompleted: boolean;
+  lastSeenWhatsNewVersion?: string | null;
 };
 
 export type SettingsViewData = {
   settings: ScribeSettings;
   models: WhisperModelOption[];
+  settingsFileExisted?: boolean;
 };
 
 export type UpdateStatus = "idle" | "checking" | "up-to-date" | "available" | "downloading" | "installing" | "ready" | "error";

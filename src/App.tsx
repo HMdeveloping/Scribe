@@ -47,7 +47,7 @@ import { ContextMenu, type ContextMenuAction, type ContextMenuState } from "./co
 import { localizedModel, SettingsView, type SettingsViewData, type UpdateProgress, type UpdateStatus } from "./components/SettingsView";
 import { Onboarding } from "./components/Onboarding";
 import { useWhisperModelDownloads } from "./hooks/useWhisperModelDownloads";
-import { createTranslator, currentGreetingKey, type AppLanguage } from "./i18n";
+import { createTranslator, currentGreetingKey, type AppLanguage, type TranslationKey } from "./i18n";
 import type { Project, RecordingDetails, RecordingSummary } from "./types/library";
 
 type TranscriptionErrorKind = "model_missing" | "model_downloading" | "model_ready" | "ffmpeg_missing" | "whisper_missing" | "audio_missing" | "conversion_failed" | "transcript_unavailable" | "transcription";
@@ -55,6 +55,18 @@ type TranscriptionErrorKind = "model_missing" | "model_downloading" | "model_rea
 type ClassifiedTranscriptionError = {
   kind: TranscriptionErrorKind;
   message?: string;
+};
+
+const releaseNotes: Record<string, { itemKeys: TranslationKey[] }> = {
+  "0.1.4": {
+    itemKeys: [
+      "whatsNew014ReliableRecording",
+      "whatsNew014LongImports",
+      "whatsNew014ImmediateVisibility",
+      "whatsNew014Localization",
+      "whatsNew014LayoutFixes",
+    ],
+  },
 };
 
 type ImportAudioProgress = {
@@ -184,6 +196,9 @@ function App() {
   const [onboardingDismissedThisSession, setOnboardingDismissedThisSession] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState("General");
   const [recordingSessionKey, setRecordingSessionKey] = useState(0);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const freshInstallRef = useRef(false);
+  const baselinedFreshInstallVersionRef = useRef<string | null>(null);
 
   const currentNavEntry = useCallback((): NavEntry => ({
     view,
@@ -397,6 +412,7 @@ function App() {
   useEffect(() => {
     void invoke<SettingsViewData>("load_scribe_settings")
       .then((settings) => {
+        if (!settings.settingsFileExisted) freshInstallRef.current = true;
         syncSettings(settings);
         setSettingsLoaded(true);
       })
@@ -417,6 +433,41 @@ function App() {
       .then(setAppVersion)
       .catch((reason) => console.warn("Scribe: unable to read app version", reason));
   }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded || !settingsData || onboardingOpen) return;
+    const notes = releaseNotes[appVersion];
+    if (!notes) return;
+    if (!settingsData.settingsFileExisted || freshInstallRef.current) {
+      if (
+        settingsData.settings.lastSeenWhatsNewVersion !== appVersion
+        && baselinedFreshInstallVersionRef.current !== appVersion
+      ) {
+        baselinedFreshInstallVersionRef.current = appVersion;
+        void invoke<SettingsViewData>("save_scribe_settings", {
+          lastSeenWhatsNewVersion: appVersion,
+        })
+          .then(syncSettings)
+          .catch((reason) => console.error("Scribe: unable to save initial what's new state", reason));
+      }
+      return;
+    }
+    if (!settingsData.settings.onboardingCompleted) return;
+    if (settingsData.settings.lastSeenWhatsNewVersion === appVersion) return;
+    setWhatsNewOpen(true);
+  }, [appVersion, onboardingOpen, settingsData, settingsLoaded, syncSettings]);
+
+  async function dismissWhatsNew() {
+    setWhatsNewOpen(false);
+    try {
+      const nextData = await invoke<SettingsViewData>("save_scribe_settings", {
+        lastSeenWhatsNewVersion: appVersion,
+      });
+      syncSettings(nextData);
+    } catch (reason) {
+      console.error("Scribe: unable to save what's new state", reason);
+    }
+  }
 
   useEffect(() => {
     void checkForUpdates({ silent: true });
@@ -1395,6 +1446,27 @@ function App() {
               ) : updateStatus === "downloading" || updateStatus === "installing" ? null : (
                 <button type="button" className="dialog-button dialog-button-secondary" onClick={closeUpdateDialog}>{t("ok")}</button>
               )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {whatsNewOpen && releaseNotes[appVersion] ? (
+        <div className="modal-backdrop modal-backdrop-polished" role="presentation">
+          <div className="library-dialog whats-new-dialog" role="dialog" aria-modal="true" aria-label={t("whatsNewTitle")}>
+            <div className="whats-new-icon" aria-hidden="true">
+              <img src={scribeIcon} alt="" />
+            </div>
+            <div className="whats-new-copy">
+              <h2>{t("whatsNewTitle")}</h2>
+              <p>Scribe {appVersion}</p>
+              <ul>
+                {releaseNotes[appVersion].itemKeys.map((key) => (
+                  <li key={key}>{t(key)}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="dialog-actions confirm-dialog-actions">
+              <button type="button" className="dialog-button dialog-button-primary" onClick={() => void dismissWhatsNew()}>{t("whatsNewGotIt")}</button>
             </div>
           </div>
         </div>

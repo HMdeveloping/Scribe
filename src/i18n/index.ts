@@ -217,6 +217,13 @@ const en = {
   couldntCheckForUpdates: "Couldn't check for updates",
   updateCheckFailedCopy: "Check your internet connection and try again.",
   couldntInstallUpdate: "Couldn't install the update.",
+  whatsNewTitle: "What's new in Scribe",
+  whatsNewGotIt: "Got it",
+  whatsNew014ReliableRecording: "More reliable recording and transcription",
+  whatsNew014LongImports: "Longer audio imports now work correctly",
+  whatsNew014ImmediateVisibility: "Recordings appear immediately after saving",
+  whatsNew014Localization: "Improved languages and translations",
+  whatsNew014LayoutFixes: "Fixed sidebar display and other smaller issues",
   welcomeToScribe: "Welcome to Scribe",
   onboardingWelcomeCopy: "Record, import, and transcribe audio with a local-first workspace.",
   onboardingRecordImport: "Record or import audio",
@@ -323,6 +330,19 @@ const reliabilityTranslations: Record<Exclude<AppLanguage, "en">, Partial<Dictio
   pl: { importUnsupported: "Ten format audio nie jest obsługiwany.", importSourceMissing: "Nie znaleziono wybranego pliku audio.", importInspectFailed: "Scribe skopiował plik, ale nie mógł odczytać jego danych audio.", transcriptionModelReadyTitle: "Model transkrypcji jest gotowy", transcriptionModelReadyCopy: "Model zakończył pobieranie. Ponów transkrypcję, gdy będziesz gotów.", newRecordingTitle: "Nowe nagranie", audioPlayer: "Odtwarzacz audio", playRecording: "Odtwórz nagranie", pauseRecording: "Wstrzymaj nagranie", playbackPosition: "Pozycja odtwarzania", recordingContent: "Zawartość nagrania", elapsedTime: "Czas trwania", microphoneUnavailableDetail: "Dostęp do mikrofonu jest niedostępny.", microphonePermissionDetail: "Odmówiono dostępu do mikrofonu. Włącz dostęp dla Scribe w ustawieniach systemu.", microphoneDisconnectedDetail: "Mikrofon został odłączony. Rozpocznij nowe nagranie, aby połączyć go ponownie.", recordingTooShort: "Nagranie jest za krótkie.", startNewRecording: "Rozpocznij nowe nagranie" },
 };
 
+const whatsNewTranslations: Record<AppLanguage, Partial<Dictionary>> = {
+  sl: { whatsNewTitle: "Kaj je novega v Scribe", whatsNewGotIt: "V redu", whatsNew014ReliableRecording: "Bolj zanesljivo snemanje in prepisovanje", whatsNew014LongImports: "Uvoz daljših zvočnih posnetkov zdaj deluje pravilno", whatsNew014ImmediateVisibility: "Posnetki se po shranjevanju prikažejo takoj", whatsNew014Localization: "Izboljšani jeziki in prevodi", whatsNew014LayoutFixes: "Popravljen prikaz stranskega menija in druge manjše napake" },
+  en: {},
+  de: { whatsNewTitle: "Neu in Scribe", whatsNewGotIt: "Verstanden", whatsNew014ReliableRecording: "Zuverlässigere Aufnahme und Transkription", whatsNew014LongImports: "Längere Audioimporte funktionieren jetzt richtig", whatsNew014ImmediateVisibility: "Aufnahmen erscheinen sofort nach dem Speichern", whatsNew014Localization: "Verbesserte Sprachen und Übersetzungen", whatsNew014LayoutFixes: "Korrigierte Seitenleiste und weitere kleinere Fehler" },
+  es: { whatsNewTitle: "Novedades de Scribe", whatsNewGotIt: "Entendido", whatsNew014ReliableRecording: "Grabación y transcripción más fiables", whatsNew014LongImports: "La importación de audios largos ahora funciona correctamente", whatsNew014ImmediateVisibility: "Las grabaciones aparecen inmediatamente después de guardarse", whatsNew014Localization: "Idiomas y traducciones mejorados", whatsNew014LayoutFixes: "Barra lateral corregida y otros ajustes menores" },
+  it: { whatsNewTitle: "Novità in Scribe", whatsNewGotIt: "Capito", whatsNew014ReliableRecording: "Registrazione e trascrizione più affidabili", whatsNew014LongImports: "L'importazione di audio più lunghi ora funziona correttamente", whatsNew014ImmediateVisibility: "Le registrazioni appaiono subito dopo il salvataggio", whatsNew014Localization: "Lingue e traduzioni migliorate", whatsNew014LayoutFixes: "Menu laterale corretto e altri piccoli problemi risolti" },
+  hr: { whatsNewTitle: "Što je novo u Scribeu", whatsNewGotIt: "U redu", whatsNew014ReliableRecording: "Pouzdanije snimanje i transkripcija", whatsNew014LongImports: "Uvoz duljih audio snimki sada radi ispravno", whatsNew014ImmediateVisibility: "Snimke se prikazuju odmah nakon spremanja", whatsNew014Localization: "Poboljšani jezici i prijevodi", whatsNew014LayoutFixes: "Popravljen prikaz bočnog izbornika i druge manje pogreške" },
+  fr: { whatsNewTitle: "Nouveautés de Scribe", whatsNewGotIt: "Compris", whatsNew014ReliableRecording: "Enregistrement et transcription plus fiables", whatsNew014LongImports: "L'importation de longs fichiers audio fonctionne correctement", whatsNew014ImmediateVisibility: "Les enregistrements apparaissent dès leur sauvegarde", whatsNew014Localization: "Langues et traductions améliorées", whatsNew014LayoutFixes: "Barre latérale corrigée et autres petits problèmes résolus" },
+  pt: { whatsNewTitle: "Novidades no Scribe", whatsNewGotIt: "Entendido", whatsNew014ReliableRecording: "Gravação e transcrição mais fiáveis", whatsNew014LongImports: "A importação de áudios longos agora funciona corretamente", whatsNew014ImmediateVisibility: "As gravações aparecem imediatamente após serem guardadas", whatsNew014Localization: "Idiomas e traduções melhorados", whatsNew014LayoutFixes: "Menu lateral corrigido e outros pequenos problemas resolvidos" },
+  nl: { whatsNewTitle: "Nieuw in Scribe", whatsNewGotIt: "Begrepen", whatsNew014ReliableRecording: "Betrouwbaarder opnemen en transcriberen", whatsNew014LongImports: "Langere audio-imports werken nu goed", whatsNew014ImmediateVisibility: "Opnamen verschijnen direct na het opslaan", whatsNew014Localization: "Verbeterde talen en vertalingen", whatsNew014LayoutFixes: "Zijbalkweergave en andere kleine problemen opgelost" },
+  pl: { whatsNewTitle: "Co nowego w Scribe", whatsNewGotIt: "Rozumiem", whatsNew014ReliableRecording: "Bardziej niezawodne nagrywanie i transkrypcja", whatsNew014LongImports: "Import dłuższych nagrań audio działa teraz prawidłowo", whatsNew014ImmediateVisibility: "Nagrania pojawiają się od razu po zapisaniu", whatsNew014Localization: "Ulepszone języki i tłumaczenia", whatsNew014LayoutFixes: "Poprawiony panel boczny i inne drobne błędy" },
+};
+
 const slovenianCompletionTranslations: Partial<Dictionary> = {
   archive: "Arhiviraj",
   archiveFailed: "Posnetka ni bilo mogoče arhivirati.",
@@ -398,6 +418,7 @@ const slovenianCompletionTranslations: Partial<Dictionary> = {
 };
 
 for (const language of languages) {
+  Object.assign(dictionaries[language.code], whatsNewTranslations[language.code]);
   if (language.code !== "en") Object.assign(dictionaries[language.code], v01ProgressTranslations[language.code], onboardingTranslations[language.code], modelRecoveryTranslations[language.code], reliabilityTranslations[language.code]);
 }
 
