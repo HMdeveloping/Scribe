@@ -1,0 +1,1284 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  AudioLines,
+  Archive,
+  FolderInput,
+  Home,
+  FolderClosed,
+  Pencil,
+  RotateCcw,
+  Search,
+  Mic,
+  Upload,
+  Settings,
+  ArrowRight,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Trash2,
+} from "lucide-react";
+
+import "./App.css";
+import scribeIcon from "./assets/scribe-icon.png";
+import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
+import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
+import {
+  RecordingView,
+  TranscriptView,
+  FinalizingView,
+  type RecordingMetadata,
+  type TranscriptionProgress,
+  type TranscriptData,
+} from "./components/RecordingWorkflow";
+import {
+  HomeRecentRecordings,
+  MoveToProjectDialog,
+  ProjectDialog,
+  ProjectDetailView,
+  ProjectsView,
+  RecordingsView,
+  RenameDialog,
+} from "./components/LibraryViews";
+import { ContextMenu, type ContextMenuAction, type ContextMenuState } from "./components/ContextMenu";
+import { SettingsView, type SettingsViewData, type UpdateProgress, type UpdateStatus } from "./components/SettingsView";
+import { Onboarding } from "./components/Onboarding";
+import { useWhisperModelDownloads } from "./hooks/useWhisperModelDownloads";
+import { createTranslator, currentGreetingKey, type AppLanguage } from "./i18n";
+import type { Project, RecordingDetails, RecordingSummary } from "./types/library";
+
+type TranscriptionErrorKind = "model_missing" | "ffmpeg_missing" | "whisper_missing" | "transcription";
+
+type TranscriptionConfig = {
+  modelFilename: string;
+  language: string;
+};
+
+type ClassifiedTranscriptionError = {
+  kind: TranscriptionErrorKind;
+  message?: string;
+};
+
+type ImportAudioProgress = {
+  importId: string;
+  recordingId?: string;
+  stage: "importing" | "preparing" | "transcribing" | "finalizing";
+  downloadedBytes: number;
+  totalBytes?: number;
+  percent?: number;
+};
+
+type RecordingProgressEvent = {
+  recordingId: string;
+  stage: "preparing" | "transcribing" | "finalizing";
+  durationSeconds?: number;
+};
+
+type SidebarMode = "auto" | "expanded" | "collapsed";
+type ViewName = "home" | "projects" | "recordings" | "archived-recordings" | "project-detail" | "recording" | "transcript" | "settings";
+type NavEntry = {
+  view: ViewName;
+  projectId?: string | null;
+  recordingId?: string | null;
+};
+
+type DeleteRecordingsResult = {
+  deletedIds: string[];
+  failed: { id: string; error: string }[];
+};
+
+type DeleteProjectsResult = {
+  deletedIds: string[];
+  clearedRecordingCount: number;
+};
+
+type UpdateDetails = {
+  version: string;
+  body?: string;
+  date?: string;
+};
+
+function isTopLevelView(viewName: ViewName) {
+  return viewName === "home" || viewName === "projects" || viewName === "recordings" || viewName === "settings";
+}
+
+function classifyTranscriptionError(reason: unknown): ClassifiedTranscriptionError {
+  const kind = typeof reason === "object" && reason !== null && "kind" in reason
+    ? String((reason as { kind: unknown }).kind)
+    : "";
+  const message = typeof reason === "object" && reason !== null && "message" in reason
+    ? String((reason as { message: unknown }).message)
+    : undefined;
+
+  if (kind === "model_missing") return { kind: "model_missing", message };
+  if (kind === "ffmpeg_missing") return { kind: "ffmpeg_missing", message };
+  if (kind === "whisper_missing") return { kind: "whisper_missing", message };
+  return { kind: "transcription", message };
+}
+
+function recordingTimeValue(value: string) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && /^\d+$/.test(value)) {
+    return numeric * 1000;
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function sortByLibraryRecency(items: RecordingSummary[]) {
+  return [...items].sort((left, right) => {
+    const updatedDelta = recordingTimeValue(right.updatedAt) - recordingTimeValue(left.updatedAt);
+    if (updatedDelta !== 0) return updatedDelta;
+    return recordingTimeValue(right.createdAt) - recordingTimeValue(left.createdAt);
+  });
+}
+
+function App() {
+  const [view, setView] = useState<ViewName>("home");
+  const [history, setHistory] = useState<NavEntry[]>([]);
+  const [finalizing, setFinalizing] = useState(false);
+  const [recording, setRecording] = useState<RecordingMetadata | null>(null);
+  const [transcript, setTranscript] = useState<TranscriptData | null>(null);
+  const [recordings, setRecordings] = useState<RecordingSummary[]>([]);
+  const [archivedRecordings, setArchivedRecordings] = useState<RecordingSummary[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
+  const [projectRecordings, setProjectRecordings] = useState<RecordingSummary[]>([]);
+  const [recordingProjectId, setRecordingProjectId] = useState<string | null>(null);
+  const [recordingProjectName, setRecordingProjectName] = useState<string | null>(null);
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<{ recordingIds: string[]; projectId: string | null } | null>(null);
+  const [deleteTargetIds, setDeleteTargetIds] = useState<string[]>([]);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
+  const [projectDeleteTargetIds, setProjectDeleteTargetIds] = useState<string[]>([]);
+  const [projectDeleteDialogOpen, setProjectDeleteDialogOpen] = useState(false);
+  const [projectDeleteInProgress, setProjectDeleteInProgress] = useState(false);
+  const [renameProjectTarget, setRenameProjectTarget] = useState<Project | null>(null);
+  const [renameRecordingTarget, setRenameRecordingTarget] = useState<RecordingSummary | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
+  const [transcriptionConfig, setTranscriptionConfig] = useState<TranscriptionConfig>({
+    modelFilename: "ggml-large-v3-turbo.bin",
+    language: "sl",
+  });
+  const [appLanguage, setAppLanguage] = useState<AppLanguage>("en");
+  const [transcriptionError, setTranscriptionError] = useState<ClassifiedTranscriptionError | undefined>();
+  const [finalizingProgress, setFinalizingProgress] = useState<TranscriptionProgress | null>(null);
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("auto");
+  const [isNarrowSidebarRange, setIsNarrowSidebarRange] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 980px)").matches;
+  });
+  const t = useMemo(() => createTranslator(appLanguage), [appLanguage]);
+  const activeRecordingProgressIdRef = useRef<string | null>(null);
+  const activeImportProgressIdRef = useRef<string | null>(null);
+  const updateRef = useRef<Update | null>(null);
+  const dismissedUpdateVersionRef = useRef<string | null>(null);
+  const [appVersion, setAppVersion] = useState("0.1.0");
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
+  const [updateDetails, setUpdateDetails] = useState<UpdateDetails | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
+  const [updateError, setUpdateError] = useState("");
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [settingsData, setSettingsData] = useState<SettingsViewData | null>(null);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingDismissedThisSession, setOnboardingDismissedThisSession] = useState(false);
+
+  const currentNavEntry = useCallback((): NavEntry => ({
+    view,
+    projectId: activeProject?.id ?? recordingProjectId ?? null,
+    recordingId: recording?.id ?? null,
+  }), [activeProject?.id, recording?.id, recordingProjectId, view]);
+
+  const applyNavEntry = useCallback(async (entry: NavEntry) => {
+    setFinalizing(false);
+    setContextMenu(null);
+    if (entry.view === "project-detail" && entry.projectId) {
+      const project = projects.find((item) => item.id === entry.projectId) ?? activeProject;
+      if (project) {
+        setActiveProject(project);
+        setProjectRecordings(recordings.filter((item) => item.projectId === project.id));
+      }
+    }
+    setView(entry.view);
+  }, [activeProject, projects, recordings]);
+
+  const navigate = useCallback((entry: NavEntry, mode: "push" | "replace" | "top" = "push") => {
+    if (mode === "push") {
+      setHistory((stack) => {
+        const current = currentNavEntry();
+        const last = stack[stack.length - 1];
+        if (last?.view === current.view && last.projectId === current.projectId && last.recordingId === current.recordingId) {
+          return stack;
+        }
+        return [...stack, current];
+      });
+    } else if (mode === "replace") {
+      setHistory((stack) => stack);
+    } else {
+      setHistory([]);
+    }
+    void applyNavEntry(entry);
+  }, [applyNavEntry, currentNavEntry]);
+
+  const goBack = useCallback(() => {
+    setHistory((stack) => {
+      const previous = stack[stack.length - 1];
+      if (previous) void applyNavEntry(previous);
+      return stack.slice(0, -1);
+    });
+  }, [applyNavEntry]);
+
+  const canGoBack = history.length > 0 && !isTopLevelView(view) && view !== "recording" && !finalizing;
+
+  const syncSettings = useCallback((nextSettings: SettingsViewData) => {
+    setSettingsData(nextSettings);
+    setTranscriptionConfig({
+      modelFilename: nextSettings.models.find((model) => model.id === nextSettings.settings.whisperModel)?.filename ?? "ggml-large-v3-turbo.bin",
+      language: nextSettings.settings.transcriptionLanguage,
+    });
+    setAppLanguage(nextSettings.settings.appLanguage);
+  }, []);
+
+  const whisperDownloads = useWhisperModelDownloads({
+    getSettings: () => settingsData,
+    onRefreshSettings: syncSettings,
+  });
+
+  const checkForUpdates = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (import.meta.env.DEV && silent) return;
+    setUpdateError("");
+    setUpdateProgress(null);
+    setUpdateStatus("checking");
+    try {
+      const nextUpdate = await check();
+      updateRef.current = nextUpdate;
+      if (!nextUpdate) {
+        setUpdateDetails(null);
+        setUpdateStatus("up-to-date");
+        if (!silent) setUpdateDialogOpen(true);
+        return;
+      }
+      const details = {
+        version: nextUpdate.version,
+        body: nextUpdate.body,
+        date: nextUpdate.date,
+      };
+      setUpdateDetails(details);
+      setUpdateStatus("available");
+      if (!silent || dismissedUpdateVersionRef.current !== details.version) {
+        setUpdateDialogOpen(true);
+      }
+    } catch (reason) {
+      console.error("Scribe: unable to check for updates", reason);
+      setUpdateStatus("error");
+      setUpdateError(t("couldntCheckForUpdates"));
+      if (!silent) setUpdateDialogOpen(true);
+    }
+  }, [t]);
+
+  const installAvailableUpdate = useCallback(async () => {
+    const availableUpdate = updateRef.current;
+    if (!availableUpdate) return;
+    let downloadedBytes = 0;
+    setUpdateError("");
+    setUpdateProgress({ downloadedBytes: 0 });
+    setUpdateStatus("downloading");
+    try {
+      await availableUpdate.downloadAndInstall((event: DownloadEvent) => {
+        if (event.event === "Started") {
+          downloadedBytes = 0;
+          setUpdateProgress({
+            downloadedBytes,
+            totalBytes: event.data.contentLength,
+            percent: event.data.contentLength ? 0 : undefined,
+          });
+        } else if (event.event === "Progress") {
+          downloadedBytes += event.data.chunkLength;
+          setUpdateProgress((current) => {
+            const totalBytes = current?.totalBytes;
+            return {
+              downloadedBytes,
+              totalBytes,
+              percent: totalBytes ? downloadedBytes * 100 / totalBytes : undefined,
+            };
+          });
+        } else {
+          setUpdateStatus("installing");
+        }
+      });
+      setUpdateStatus("ready");
+    } catch (reason) {
+      console.error("Scribe: unable to install update", reason);
+      setUpdateStatus("error");
+      setUpdateError(t("couldntInstallUpdate"));
+    }
+  }, [t]);
+
+  function closeUpdateDialog() {
+    if (updateDetails) dismissedUpdateVersionRef.current = updateDetails.version;
+    setUpdateDialogOpen(false);
+  }
+
+  function returnToRecordingOrigin(projectId: string | null = recordingProjectId) {
+    setRecording(null);
+    setTranscript(null);
+    setFinalizing(false);
+    const previous = history[history.length - 1];
+    if (previous && previous.view !== "recording" && previous.view !== "transcript") {
+      setHistory((stack) => stack.slice(0, -1));
+      void applyNavEntry(previous);
+      return;
+    }
+    if (projectId) {
+      const project = projects.find((item) => item.id === projectId) ?? activeProject;
+      if (project) {
+        setActiveProject(project);
+        setProjectRecordings(recordings.filter((item) => item.projectId === project.id));
+        navigate({ view: "project-detail", projectId: project.id }, "top");
+        return;
+      }
+    }
+    navigate({ view: "home" }, "top");
+  }
+
+  useEffect(() => {
+    void invoke<TranscriptionConfig>("get_transcription_config")
+      .then((config) => {
+        setTranscriptionConfig(config);
+      })
+      .catch((reason) => console.warn("Scribe: unable to load transcription config", reason));
+    void invoke<SettingsViewData>("load_scribe_settings")
+      .then((settings) => {
+        syncSettings(settings);
+        setSettingsLoaded(true);
+      })
+      .catch((reason) => {
+        console.warn("Scribe: unable to load app language", reason);
+        setSettingsLoaded(true);
+      });
+  }, [syncSettings]);
+
+  useEffect(() => {
+    if (settingsLoaded && settingsData && !settingsData.settings.onboardingCompleted && !onboardingDismissedThisSession) {
+      setOnboardingOpen(true);
+    }
+  }, [onboardingDismissedThisSession, settingsData, settingsLoaded]);
+
+  useEffect(() => {
+    void getVersion()
+      .then(setAppVersion)
+      .catch((reason) => console.warn("Scribe: unable to read app version", reason));
+  }, []);
+
+  useEffect(() => {
+    void checkForUpdates({ silent: true });
+    const interval = window.setInterval(() => {
+      void checkForUpdates({ silent: true });
+    }, 5 * 60 * 60 * 1000);
+    return () => window.clearInterval(interval);
+  }, [checkForUpdates]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 980px)");
+    const syncNarrowRange = () => setIsNarrowSidebarRange(mediaQuery.matches);
+    syncNarrowRange();
+    mediaQuery.addEventListener("change", syncNarrowRange);
+    return () => mediaQuery.removeEventListener("change", syncNarrowRange);
+  }, []);
+
+  const refreshLibrary = useCallback(async () => {
+    await invoke("initialize_library");
+    const [nextProjects, nextRecordings, nextArchivedRecordings] = await Promise.all([
+      invoke<Project[]>("list_projects"),
+      invoke<RecordingSummary[]>("list_recordings"),
+      invoke<RecordingSummary[]>("list_archived_recordings"),
+    ]);
+    setProjects(nextProjects);
+    setRecordings(nextRecordings);
+    setArchivedRecordings(nextArchivedRecordings);
+    setActiveProject((current) => {
+      if (!current) return current;
+      const nextProject = nextProjects.find((project) => project.id === current.id) ?? null;
+      if (nextProject) {
+        setProjectRecordings(nextRecordings.filter((item) => item.projectId === nextProject.id));
+      }
+      return nextProject;
+    });
+  }, []);
+
+  useEffect(() => {
+    void refreshLibrary().catch((reason) => console.warn("Scribe: unable to load library", reason));
+  }, [refreshLibrary]);
+
+  useEffect(() => {
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+
+    void listen<ImportAudioProgress>("import-audio-progress", (event) => {
+      if (disposed || event.payload.importId !== activeImportProgressIdRef.current) return;
+      setFinalizingProgress({
+        stage: event.payload.stage,
+        percent: event.payload.percent,
+        downloadedBytes: event.payload.downloadedBytes,
+        totalBytes: event.payload.totalBytes,
+      });
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlisteners.push(unlisten);
+    });
+
+    void listen<RecordingProgressEvent>("recording-transcription-progress", (event) => {
+      if (disposed || event.payload.recordingId !== activeRecordingProgressIdRef.current) return;
+      setFinalizingProgress({
+        stage: event.payload.stage,
+        durationSeconds: event.payload.durationSeconds,
+      });
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlisteners.push(unlisten);
+    });
+
+    return () => {
+      disposed = true;
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, []);
+
+  useEffect(() => {
+    function isTypingTarget(target: EventTarget | null) {
+      if (!(target instanceof HTMLElement)) return false;
+      return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (isTypingTarget(event.target)) return;
+      const isBackShortcut = (event.metaKey && event.key === "[") || (event.altKey && event.key === "ArrowLeft");
+      if (!isBackShortcut || !canGoBack) return;
+      event.preventDefault();
+      goBack();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [canGoBack, goBack]);
+
+  async function transcribeRecording(nextRecording: RecordingMetadata) {
+    activeRecordingProgressIdRef.current = nextRecording.id;
+    activeImportProgressIdRef.current = null;
+    setFinalizing(true);
+    setTranscriptionError(undefined);
+    setFinalizingProgress({ stage: "preparing", durationSeconds: nextRecording.durationSeconds });
+    const selectedModel = settingsData?.models.find((model) => model.id === settingsData.settings.whisperModel);
+    const selectedModelPending = selectedModel && !selectedModel.installed && (
+      whisperDownloads.activeDownloadId === selectedModel.id ||
+      whisperDownloads.queuedDownloads.includes(selectedModel.id) ||
+      whisperDownloads.downloadProgress[selectedModel.id]?.state === "downloading" ||
+      whisperDownloads.downloadProgress[selectedModel.id]?.state === "installing"
+    );
+    if (selectedModelPending) {
+      setTranscriptionError({ kind: "model_missing", message: t("modelDownloadingFriendly") });
+      return;
+    }
+    try {
+      const nextTranscript = await invoke<TranscriptData>("transcribe_recording", {
+        recordingId: nextRecording.id,
+      });
+      setTranscript(nextTranscript);
+      activeRecordingProgressIdRef.current = null;
+      setFinalizingProgress(null);
+      setFinalizing(false);
+      navigate({ view: "transcript", recordingId: nextRecording.id, projectId: recordingProjectId }, "replace");
+      void refreshLibrary();
+    } catch (reason) {
+      console.error("Scribe: transcription failed", reason);
+      setTranscriptionError(classifyTranscriptionError(reason));
+    }
+  }
+
+  function startRecording(projectId: string | null = null) {
+    setFinalizing(false);
+    setFinalizingProgress(null);
+    activeRecordingProgressIdRef.current = null;
+    activeImportProgressIdRef.current = null;
+    setRecording(null);
+    setTranscript(null);
+    setRecordingProjectId(projectId);
+    setRecordingProjectName(projectId ? projects.find((project) => project.id === projectId)?.name ?? null : null);
+    setTranscriptionError(undefined);
+    navigate({ view: "recording", projectId }, "push");
+  }
+
+  async function openRecording(recordingId: string) {
+    try {
+      const details = await invoke<RecordingDetails>("get_recording", { recordingId });
+      setRecording(details.recording);
+      setTranscript(details.transcript);
+      setRecordingProjectId(details.projectId);
+      setRecordingProjectName(details.projectName);
+      setTranscriptionError(undefined);
+      setFinalizing(false);
+      navigate({ view: "transcript", recordingId, projectId: details.projectId }, "push");
+    } catch (reason) {
+      console.error("Scribe: unable to open recording", reason);
+    }
+  }
+
+  async function createProject(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      const project = await invoke<Project>("create_project", { name: trimmed });
+      setProjectDialogOpen(false);
+      await refreshLibrary();
+      setActiveProject(project);
+      setProjectRecordings([]);
+      navigate({ view: "project-detail", projectId: project.id }, "push");
+    } catch (reason) {
+      console.error("Scribe: unable to create project", reason);
+    }
+  }
+
+  async function openProject(project: Project) {
+    try {
+      setActiveProject(project);
+      setProjectRecordings(await invoke<RecordingSummary[]>("list_project_recordings", { projectId: project.id }));
+      setFinalizing(false);
+      navigate({ view: "project-detail", projectId: project.id }, "push");
+    } catch (reason) {
+      console.error("Scribe: unable to open project", reason);
+    }
+  }
+
+  async function importAudio(projectId: string | null = null) {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{
+          name: "Audio",
+          extensions: ["mp3", "wav", "m4a", "aac", "flac", "ogg", "oga", "opus", "webm", "mp4"],
+        }],
+      });
+      if (typeof selected !== "string") return;
+
+      const targetProject = projectId ? projects.find((project) => project.id === projectId) ?? activeProject : null;
+      setFinalizing(true);
+      setTranscriptionError(undefined);
+      setRecording(null);
+      setTranscript(null);
+      setRecordingProjectId(projectId);
+      setRecordingProjectName(targetProject?.name ?? null);
+      const importId = crypto.randomUUID();
+      activeImportProgressIdRef.current = importId;
+      setFinalizingProgress({ stage: "importing", downloadedBytes: 0 });
+      const details = await invoke<RecordingDetails>("import_audio_recording", {
+        sourcePath: selected,
+        projectId,
+        importId,
+      });
+      setRecording(details.recording);
+      setTranscript(null);
+      setRecordingProjectId(details.projectId);
+      setRecordingProjectName(details.projectName);
+      await refreshLibrary();
+      void transcribeRecording(details.recording);
+    } catch (reason) {
+      console.error("Scribe: unable to import audio", reason);
+      setFinalizing(false);
+      setFinalizingProgress(null);
+      activeImportProgressIdRef.current = null;
+      setTranscriptionError(classifyTranscriptionError(reason));
+      window.alert(t("importFailed"));
+    }
+  }
+
+  function requestDeleteProjects(projectIds: string[]) {
+    const targetIds = [...projectIds];
+    console.info("[project-delete-ui] requested ids", targetIds);
+    setProjectDeleteTargetIds(targetIds);
+    setProjectDeleteDialogOpen(true);
+  }
+
+  async function confirmDeleteProjects() {
+    console.info("[project-delete-ui] confirm clicked");
+    const targetIds = [...projectDeleteTargetIds];
+    console.info("[project-delete-ui] ids at confirm time", targetIds);
+    if (targetIds.length === 0) {
+      console.error("[project-delete-ui] confirm blocked: no pending ids");
+      return false;
+    }
+    setProjectDeleteInProgress(true);
+    try {
+      console.info("[project-delete-ui] invoking delete_projects", { projectIds: targetIds });
+      const result = await invoke<DeleteProjectsResult>("delete_projects", { projectIds: targetIds });
+      console.info("[project-delete-ui] resolved", result);
+      if (result.deletedIds.length !== targetIds.length) {
+        console.error("[project-delete-ui] delete count mismatch", result);
+        window.alert(t("projectDeleteFailed"));
+        return false;
+      }
+      if (activeProject && result.deletedIds.includes(activeProject.id)) {
+        setActiveProject(null);
+        setProjectRecordings([]);
+        navigate({ view: "projects" }, "top");
+      }
+      await refreshLibrary();
+      setProjectDeleteDialogOpen(false);
+      setProjectDeleteTargetIds([]);
+      return true;
+    } catch (reason) {
+      console.error("[project-delete-ui] rejected", reason);
+      window.alert(t("projectDeleteFailed"));
+      return false;
+    } finally {
+      setProjectDeleteInProgress(false);
+    }
+  }
+
+  async function deleteProject(project: Project) {
+    requestDeleteProjects([project.id]);
+  }
+
+  async function deleteActiveProject() {
+    if (!activeProject) return;
+    await deleteProject(activeProject);
+  }
+
+  async function deleteProjects(projectsToDelete: Project[]) {
+    if (projectsToDelete.length === 0) return false;
+    requestDeleteProjects(projectsToDelete.map((project) => project.id));
+    return false;
+  }
+
+  async function renameCurrentRecording(title: string) {
+    if (!recording) return;
+    const details = await invoke<RecordingDetails>("rename_recording", { recordingId: recording.id, title });
+    setRecording(details.recording);
+    setTranscript(details.transcript);
+    void refreshLibrary();
+  }
+
+  async function moveRecordings(recordingIds: string[], projectId: string | null) {
+    try {
+      if (recordingIds.length === 1) {
+        const moved = await invoke<RecordingSummary>("assign_recording_to_project", { recordingId: recordingIds[0], projectId });
+        if (recording?.id === recordingIds[0]) {
+          setRecordingProjectId(moved.projectId);
+          setRecordingProjectName(moved.projectName);
+        }
+      } else {
+        await invoke("assign_recordings_to_project", { recordingIds, projectId });
+        if (recording && recordingIds.includes(recording.id)) {
+          setRecordingProjectId(projectId);
+          setRecordingProjectName(projectId ? projects.find((project) => project.id === projectId)?.name ?? null : null);
+        }
+      }
+      setMoveTarget(null);
+      await refreshLibrary();
+    } catch (reason) {
+      console.error("Scribe: unable to move recordings", reason);
+    }
+  }
+
+  async function archiveRecordings(recordingIds: string[]) {
+    try {
+      await invoke("archive_recordings", { recordingIds });
+      await refreshLibrary();
+      if (recording && recordingIds.includes(recording.id)) {
+        returnToRecordingOrigin(recordingProjectId);
+      }
+    } catch (reason) {
+      console.error("Scribe: unable to archive recordings", reason);
+      window.alert(t("archiveFailed"));
+    }
+  }
+
+  async function restoreRecordings(recordingIds: string[]) {
+    try {
+      await invoke("restore_recordings", { recordingIds });
+      await refreshLibrary();
+    } catch (reason) {
+      console.error("Scribe: unable to restore recordings", reason);
+      window.alert(t("restoreFailed"));
+    }
+  }
+
+  function requestDeleteRecordings(recordingIds: string[]) {
+    const targetIds = [...recordingIds];
+    console.info("[delete-ui] delete action requested");
+    console.info("[delete-ui] pending ids set:", targetIds);
+    setDeleteTargetIds(targetIds);
+    setDeleteDialogOpen(true);
+    console.info("[delete-ui] dialog opened");
+  }
+
+  async function confirmDeleteRecordings() {
+    console.info("[delete-ui] confirm button clicked");
+    const targetIds = [...deleteTargetIds];
+    console.info("[delete-ui] ids at confirm time:", targetIds);
+    if (targetIds.length === 0) {
+      console.error("[delete-ui] confirm blocked: no pending ids");
+      return false;
+    }
+    setDeleteInProgress(true);
+    console.info("[delete] confirmation accepted");
+    try {
+      console.info("[delete-ui] invoking delete_recordings", { recordingIds: targetIds });
+      const result = await invoke<DeleteRecordingsResult>("delete_recordings", { recordingIds: targetIds });
+      console.info("[delete-ui] invoke resolved:", result);
+      if (result.failed.length > 0 || result.deletedIds.length !== targetIds.length) {
+        console.error("Scribe: some recordings could not be deleted", result.failed);
+        window.alert(t(targetIds.length === 1 ? "recordingDeleteFailed" : "recordingsDeleteFailed"));
+        return false;
+      }
+      if (recording && result.deletedIds.includes(recording.id)) {
+        returnToRecordingOrigin(recordingProjectId);
+      }
+      await refreshLibrary();
+      setDeleteDialogOpen(false);
+      setDeleteTargetIds([]);
+      return true;
+    } catch (reason) {
+      console.error("[delete-ui] invoke rejected:", reason);
+      window.alert(t(targetIds.length === 1 ? "recordingDeleteFailed" : "recordingsDeleteFailed"));
+      return false;
+    } finally {
+      setDeleteInProgress(false);
+    }
+  }
+
+  async function deleteRecordings(recordingIds: string[]) {
+    requestDeleteRecordings(recordingIds);
+    return false;
+  }
+
+  async function renameProject(project: Project, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      const renamed = await invoke<Project>("rename_project", { projectId: project.id, name: trimmed });
+      setRenameProjectTarget(null);
+      if (activeProject?.id === project.id) setActiveProject(renamed);
+      await refreshLibrary();
+    } catch (reason) {
+      console.error("Scribe: unable to rename project", reason);
+    }
+  }
+
+  async function renameRecordingFromDialog(item: RecordingSummary, title: string) {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    try {
+      const details = await invoke<RecordingDetails>("rename_recording", { recordingId: item.id, title: trimmed });
+      setRenameRecordingTarget(null);
+      if (recording?.id === item.id) {
+        setRecording(details.recording);
+        setTranscript(details.transcript);
+      }
+      await refreshLibrary();
+    } catch (reason) {
+      console.error("Scribe: unable to rename recording", reason);
+    }
+  }
+
+  const recordingActions = useCallback((item: RecordingSummary, options: { includeOpen?: boolean } = {}): ContextMenuAction[] => {
+    const archived = item.archivedAt !== null;
+    const includeOpen = options.includeOpen ?? true;
+    return [
+      ...(includeOpen ? [{ id: "open", label: t("open"), onSelect: () => void openRecording(item.id) }] satisfies ContextMenuAction[] : []),
+      ...(archived ? [] : [
+        { id: "rename", label: t("rename"), icon: Pencil, onSelect: () => setRenameRecordingTarget(item) },
+        { id: "move", label: t("moveToProject"), icon: FolderInput, onSelect: () => setMoveTarget({ recordingIds: [item.id], projectId: item.projectId }) },
+        { id: "archive", label: t("archive"), icon: Archive, onSelect: () => void archiveRecordings([item.id]) },
+      ] satisfies ContextMenuAction[]),
+      ...(archived ? [
+        { id: "restore", label: t("restore"), icon: RotateCcw, separatorBefore: true, onSelect: () => void restoreRecordings([item.id]) },
+        { id: "delete", label: t("deleteRecording"), icon: Trash2, destructive: true, onSelect: () => requestDeleteRecordings([item.id]) },
+      ] satisfies ContextMenuAction[] : [
+        { id: "delete", label: t("deleteRecording"), icon: Trash2, destructive: true, separatorBefore: true, onSelect: () => requestDeleteRecordings([item.id]) },
+      ] satisfies ContextMenuAction[]),
+    ];
+  }, [t, archivedRecordings, recordings, projects, recording]);
+
+  const projectActions = useCallback((project: Project): ContextMenuAction[] => {
+    return [
+      { id: "open", label: t("open"), onSelect: () => void openProject(project) },
+      { id: "rename", label: t("rename"), icon: Pencil, onSelect: () => setRenameProjectTarget(project) },
+      { id: "delete", label: t("deleteProject"), icon: Trash2, destructive: true, separatorBefore: true, onSelect: () => requestDeleteProjects([project.id]) },
+    ];
+  }, [t]);
+
+  function openContextMenu(event: MouseEvent, actions: ContextMenuAction[]) {
+    if (actions.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ x: event.clientX, y: event.clientY, actions });
+  }
+
+  const sidebarCollapsed = sidebarMode === "auto"
+    ? isNarrowSidebarRange
+    : sidebarMode === "collapsed";
+  const toggleSidebarLabel = sidebarCollapsed ? t("expandSidebar") : t("collapseSidebar");
+  const activeRecordingSummary = useMemo<RecordingSummary | null>(() => {
+    if (!recording) return null;
+    return recordings.find((item) => item.id === recording.id)
+      ?? archivedRecordings.find((item) => item.id === recording.id)
+      ?? projectRecordings.find((item) => item.id === recording.id)
+      ?? {
+        id: recording.id,
+        projectId: recordingProjectId,
+        projectName: recordingProjectName,
+        title: recording.title,
+        createdAt: recording.createdAt,
+        updatedAt: recording.createdAt,
+        durationSeconds: recording.durationSeconds,
+        language: recording.language,
+        audioFile: recording.audioFile,
+        mimeType: recording.mimeType,
+        transcriptFile: transcript ? "transcript.json" : null,
+        transcriptStatus: transcript ? "ready" : "missing",
+        archivedAt: null,
+      };
+  }, [archivedRecordings, projectRecordings, recording, recordingProjectId, recordingProjectName, recordings, transcript]);
+
+  const recentRecordings = useMemo(() => sortByLibraryRecency(recordings), [recordings]);
+
+  function toggleSidebar() {
+    setSidebarMode(sidebarCollapsed ? "expanded" : "collapsed");
+  }
+
+  return (
+    <div className="app">
+      <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`}>
+        <div className="sidebar-top">
+          <div className="sidebar-header">
+            <button className="brand brand-button" onClick={() => navigate({ view: "home" }, "top")} aria-label={t("home")} title={sidebarCollapsed ? t("home") : undefined}>
+              <div className="brand-logo">
+                <img src={scribeIcon} alt="Scribe" />
+              </div>
+              <span>Scribe</span>
+            </button>
+            <button className="sidebar-toggle" onClick={toggleSidebar} aria-label={toggleSidebarLabel} title={toggleSidebarLabel}>
+              {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+            </button>
+          </div>
+
+          <button className="new-recording" onClick={() => startRecording()} title={sidebarCollapsed ? t("newRecording") : undefined}>
+            <svg className="gradient-plus" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+              <defs>
+                <linearGradient id="new-recording-plus-gradient" x1="3" y1="3" x2="15" y2="15" gradientUnits="userSpaceOnUse">
+                  <stop stopColor="#4f6df5" />
+                  <stop offset="0.55" stopColor="#8b5cf6" />
+                  <stop offset="1" stopColor="#14b8a6" />
+                </linearGradient>
+              </defs>
+              <path d="M9 3.5v11M3.5 9h11" stroke="url(#new-recording-plus-gradient)" strokeWidth="2.25" strokeLinecap="round" />
+            </svg>
+            <span>{t("newRecording")}</span>
+          </button>
+
+          <button className="sidebar-import-audio" onClick={() => void importAudio(null)} title={sidebarCollapsed ? t("importAudio") : undefined}>
+            <Upload size={18} strokeWidth={2} />
+            <span>{t("importAudio")}</span>
+          </button>
+
+          <nav className="navigation">
+            <button
+              className={`nav-item${view === "home" ? " active" : ""}`}
+              aria-current={view === "home" ? "page" : undefined}
+              onClick={() => navigate({ view: "home" }, "top")}
+              title={sidebarCollapsed ? t("home") : undefined}
+            >
+              <Home size={18} strokeWidth={1.8} />
+              <span>{t("home")}</span>
+            </button>
+
+            <button
+              className={`nav-item${view === "projects" || view === "project-detail" ? " active" : ""}`}
+              aria-current={view === "projects" || view === "project-detail" ? "page" : undefined}
+              onClick={() => navigate({ view: "projects" }, "top")}
+              title={sidebarCollapsed ? t("projects") : undefined}
+            >
+              <FolderClosed size={18} strokeWidth={1.8} />
+              <span>{t("projects")}</span>
+            </button>
+
+            <button
+              className={`nav-item${view === "recordings" || view === "archived-recordings" ? " active" : ""}`}
+              aria-current={view === "recordings" || view === "archived-recordings" ? "page" : undefined}
+              onClick={() => navigate({ view: "recordings" }, "top")}
+              title={sidebarCollapsed ? t("recordings") : undefined}
+            >
+              <AudioLines size={18} strokeWidth={1.8} />
+              <span>{t("recordings")}</span>
+            </button>
+
+            <button className="nav-item disabled" title={sidebarCollapsed ? t("search") : undefined}>
+              <Search size={18} strokeWidth={1.8} />
+              <span>{t("search")}</span>
+              <span className="coming-soon">{t("soon")}</span>
+            </button>
+          </nav>
+
+          <div className="sidebar-section">
+            <div className="section-label">{t("tools")}</div>
+
+            <button className="nav-item disabled" title={sidebarCollapsed ? t("voiceTyping") : undefined}>
+              <Mic size={18} strokeWidth={1.8} />
+              <span>{t("voiceTyping")}</span>
+              <span className="coming-soon">{t("soon")}</span>
+            </button>
+          </div>
+        </div>
+
+        <button
+          className={`settings-button${view === "settings" ? " active" : ""}`}
+          onClick={() => navigate({ view: "settings" }, "top")}
+          title={sidebarCollapsed ? t("settings") : undefined}
+        >
+          <Settings size={18} strokeWidth={1.8} />
+          <span>{t("settings")}</span>
+        </button>
+      </aside>
+
+      <main className="main-content">
+        {finalizing ? <FinalizingView
+          errorKind={transcriptionError?.kind}
+          errorMessage={transcriptionError?.message}
+          modelFilename={transcriptionConfig.modelFilename}
+          progress={finalizingProgress}
+          t={t}
+          onRetry={() => {
+            if (recording) void transcribeRecording(recording);
+          }}
+          onContinue={() => {
+            setFinalizing(false);
+            setFinalizingProgress(null);
+            setView("transcript");
+          }}
+        /> : view === "recording" ? (
+          <RecordingView t={t} projectId={recordingProjectId} onStop={(nextRecording) => {
+            setRecording(nextRecording);
+            setTranscript(null);
+            void transcribeRecording(nextRecording);
+          }} onDiscard={goBack} />
+        ) : view === "transcript" && recording ? <TranscriptView
+          recording={recording}
+          transcript={transcript}
+          t={t}
+          onRename={renameCurrentRecording}
+          onMoveToProject={() => setMoveTarget({ recordingIds: [recording.id], projectId: recordingProjectId })}
+          actions={activeRecordingSummary ? recordingActions(activeRecordingSummary, { includeOpen: false }) : undefined}
+          projectName={recordingProjectName}
+          canGoBack={canGoBack}
+          onBack={goBack}
+          onContextMenu={(event) => {
+            if (activeRecordingSummary) {
+              openContextMenu(event, recordingActions(activeRecordingSummary, { includeOpen: false }));
+            }
+          }}
+        />
+        : view === "projects" ? <ProjectsView
+          projects={projects}
+          t={t}
+          onNewProject={() => setProjectDialogOpen(true)}
+          onOpenProject={openProject}
+          onDeleteProjects={deleteProjects}
+          getProjectActions={projectActions}
+          onProjectContextMenu={(event, project) => openContextMenu(event, projectActions(project))}
+          canGoBack={canGoBack}
+          onBack={goBack}
+        />
+        : view === "recordings" ? <RecordingsView
+          recordings={recordings}
+          t={t}
+          onOpenRecording={openRecording}
+          onOpenArchived={() => navigate({ view: "archived-recordings" }, "push")}
+          onMoveRecordings={(recordingIds) => setMoveTarget({ recordingIds, projectId: null })}
+          onArchiveRecordings={archiveRecordings}
+          onRestoreRecordings={restoreRecordings}
+          onDeleteRecordings={deleteRecordings}
+          getRecordingActions={recordingActions}
+          onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
+          canGoBack={canGoBack}
+          onBack={goBack}
+        />
+        : view === "archived-recordings" ? <RecordingsView
+          recordings={archivedRecordings}
+          t={t}
+          onOpenRecording={openRecording}
+          onMoveRecordings={(recordingIds) => setMoveTarget({ recordingIds, projectId: null })}
+          onArchiveRecordings={archiveRecordings}
+          onRestoreRecordings={restoreRecordings}
+          onDeleteRecordings={deleteRecordings}
+          getRecordingActions={recordingActions}
+          onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
+          archived
+          canGoBack={canGoBack}
+          onBack={goBack}
+        />
+        : view === "project-detail" && activeProject ? <ProjectDetailView
+          project={activeProject}
+          recordings={projectRecordings}
+          t={t}
+          onNewRecording={() => startRecording(activeProject.id)}
+          onImportAudio={() => void importAudio(activeProject.id)}
+          onOpenRecording={openRecording}
+          onRenameProject={(name) => renameProject(activeProject, name)}
+          onDeleteProject={deleteActiveProject}
+          onMoveRecordings={(recordingIds) => setMoveTarget({ recordingIds, projectId: activeProject.id })}
+          onArchiveRecordings={archiveRecordings}
+          onDeleteRecordings={deleteRecordings}
+          getRecordingActions={recordingActions}
+          onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
+          onBack={goBack}
+        />
+        : view === "settings" ? <SettingsView
+          appVersion={appVersion}
+          initialData={settingsData}
+          onCheckForUpdates={() => void checkForUpdates()}
+          onShowWelcomeGuide={() => {
+            setOnboardingDismissedThisSession(false);
+            setOnboardingOpen(true);
+          }}
+          onSettingsChange={syncSettings}
+          t={t}
+          updateError={updateError}
+          updateProgress={updateProgress}
+          updateStatus={updateStatus}
+          whisperDownloads={whisperDownloads}
+        /> : (
+        <div className="home">
+          <section className="hero">
+            <h1>{t(currentGreetingKey())}</h1>
+            <p>{t("whatWouldYouLike")}</p>
+
+            <div className="actions">
+              <button className="record-card" onClick={() => startRecording()}>
+                <div className="record-icon">
+                  <Mic size={21} strokeWidth={2.1} />
+                </div>
+
+                <div className="action-copy">
+                  <strong>{t("startRecording")}</strong>
+                  <span>{t("recordLecture")}</span>
+                </div>
+
+                <div className="record-arrow">
+                  <ArrowRight size={18} strokeWidth={2} />
+                </div>
+              </button>
+
+              <button className="action-card" onClick={() => void importAudio(null)}>
+                <div className="secondary-action-icon">
+                  <Upload size={20} strokeWidth={1.9} />
+                </div>
+
+                <div className="action-copy">
+                  <strong>{t("importAudio")}</strong>
+                  <span>{t("importFormats")}</span>
+                </div>
+              </button>
+            </div>
+          </section>
+
+          <HomeRecentRecordings
+            recordings={recentRecordings}
+            t={t}
+            onOpenRecording={openRecording}
+            onViewAll={() => navigate({ view: "recordings" }, "top")}
+            onMoveRecordings={(recordingIds) => setMoveTarget({ recordingIds, projectId: null })}
+            onArchiveRecordings={archiveRecordings}
+            onDeleteRecordings={deleteRecordings}
+            getRecordingActions={recordingActions}
+            onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
+          />
+        </div>
+        )}
+      </main>
+      {projectDialogOpen ? (
+        <ProjectDialog
+          title={t("newProject")}
+          t={t}
+          onCancel={() => setProjectDialogOpen(false)}
+          onSubmit={createProject}
+        />
+      ) : null}
+      {moveTarget ? (
+        <MoveToProjectDialog
+          projects={projects}
+          currentProjectId={moveTarget.projectId}
+          t={t}
+          onCancel={() => setMoveTarget(null)}
+          onMove={(projectId) => void moveRecordings(moveTarget.recordingIds, projectId)}
+        />
+      ) : null}
+      {renameProjectTarget ? (
+        <RenameDialog
+          title={t("rename")}
+          label={t("projectName")}
+          defaultValue={renameProjectTarget.name}
+          t={t}
+          onCancel={() => setRenameProjectTarget(null)}
+          onSubmit={(name) => void renameProject(renameProjectTarget, name)}
+        />
+      ) : null}
+      {renameRecordingTarget ? (
+        <RenameDialog
+          title={t("renameRecording")}
+          label={t("renameRecording")}
+          defaultValue={renameRecordingTarget.title}
+          t={t}
+          onCancel={() => setRenameRecordingTarget(null)}
+          onSubmit={(name) => void renameRecordingFromDialog(renameRecordingTarget, name)}
+        />
+      ) : null}
+      {deleteDialogOpen ? (
+        <div className="modal-backdrop modal-backdrop-polished" role="presentation">
+          <div className="library-dialog confirm-dialog delete-confirm-dialog" role="dialog" aria-modal="true" aria-label={t("delete")}>
+            <div className="confirm-dialog-icon" aria-hidden="true">
+              <Trash2 size={18} />
+            </div>
+            <div className="confirm-dialog-copy">
+              <h2>
+                {deleteTargetIds.length === 1
+                  ? t("deleteRecordingConfirmTitle")
+                  : t("deleteRecordingsConfirmTitle").replace("{count}", String(deleteTargetIds.length))}
+              </h2>
+              <p>
+                {deleteTargetIds.length === 1
+                  ? t("deleteRecordingConfirmCopy")
+                  : t("deleteRecordingsConfirmCopy")}
+              </p>
+            </div>
+            <div className="dialog-actions confirm-dialog-actions">
+              <button
+                type="button"
+                className="dialog-button dialog-button-secondary"
+                disabled={deleteInProgress}
+                onClick={() => {
+                  setDeleteDialogOpen(false);
+                  setDeleteTargetIds([]);
+                }}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                type="button"
+                className="dialog-button dialog-button-danger"
+                disabled={deleteInProgress}
+                onClick={() => void confirmDeleteRecordings()}
+              >
+                {deleteInProgress ? t("deleting") : t("delete")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {projectDeleteDialogOpen ? (
+        <div className="modal-backdrop modal-backdrop-polished" role="presentation">
+          <div className="library-dialog confirm-dialog delete-confirm-dialog" role="dialog" aria-modal="true" aria-label={t("deleteProject")}>
+            <div className="confirm-dialog-icon" aria-hidden="true">
+              <Trash2 size={18} />
+            </div>
+            <div className="confirm-dialog-copy">
+              <h2>
+                {projectDeleteTargetIds.length === 1
+                  ? t("deleteProjectConfirmTitle")
+                  : t("deleteProjectsConfirmTitle").replace("{count}", String(projectDeleteTargetIds.length))}
+              </h2>
+              <p>
+                {projectDeleteTargetIds.length === 1
+                  ? t("deleteProjectConfirmCopy")
+                  : t("deleteProjectsConfirmCopy")}
+              </p>
+            </div>
+            <div className="dialog-actions confirm-dialog-actions">
+              <button
+                type="button"
+                className="dialog-button dialog-button-secondary"
+                disabled={projectDeleteInProgress}
+                onClick={() => {
+                  setProjectDeleteDialogOpen(false);
+                  setProjectDeleteTargetIds([]);
+                }}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                type="button"
+                className="dialog-button dialog-button-danger"
+                disabled={projectDeleteInProgress}
+                onClick={() => void confirmDeleteProjects()}
+              >
+                {projectDeleteInProgress ? t("deleting") : t("delete")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {updateDialogOpen ? (
+        <div className="modal-backdrop modal-backdrop-polished" role="presentation" onMouseDown={updateStatus === "downloading" || updateStatus === "installing" ? undefined : closeUpdateDialog}>
+          <div className="library-dialog confirm-dialog delete-confirm-dialog" role="dialog" aria-modal="true" aria-label={t("checkForUpdates")} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="confirm-dialog-icon" aria-hidden="true">
+              <Settings size={18} />
+            </div>
+            <div className="confirm-dialog-copy">
+              <h2>
+                {updateStatus === "available" || updateStatus === "downloading" || updateStatus === "installing" || updateStatus === "ready"
+                  ? t("updateAvailableTitle").replace("{version}", updateDetails?.version ?? "")
+                  : updateStatus === "up-to-date"
+                    ? t("upToDate")
+                    : updateError || t("couldntCheckForUpdates")}
+              </h2>
+              <p>
+                {updateStatus === "downloading"
+                  ? `${t("downloadingUpdate")} ${updateProgress?.percent !== undefined ? `${Math.round(updateProgress.percent)}%` : ""}`
+                  : updateStatus === "installing"
+                    ? t("installingUpdate")
+                    : updateStatus === "ready"
+                      ? t("updateReadyCopy")
+                      : updateStatus === "error"
+                        ? updateError
+                        : updateStatus === "up-to-date"
+                          ? t("secureUpdates")
+                        : updateDetails?.body || t("updateAvailableCopy")}
+              </p>
+            </div>
+            <div className="dialog-actions confirm-dialog-actions">
+              {updateStatus === "available" ? (
+                <>
+                  <button type="button" className="dialog-button dialog-button-secondary" onClick={closeUpdateDialog}>{t("later")}</button>
+                  <button type="button" className="dialog-button dialog-button-primary" onClick={() => void installAvailableUpdate()}>{t("updateNow")}</button>
+                </>
+              ) : updateStatus === "ready" ? (
+                <button type="button" className="dialog-button dialog-button-primary" onClick={() => void relaunch()}>{t("restartAndUpdate")}</button>
+              ) : updateStatus === "downloading" || updateStatus === "installing" ? null : (
+                <button type="button" className="dialog-button dialog-button-secondary" onClick={closeUpdateDialog}>{t("ok")}</button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {onboardingOpen ? (
+        <Onboarding
+          data={settingsData}
+          onClose={() => {
+            setOnboardingOpen(false);
+            setOnboardingDismissedThisSession(true);
+            navigate({ view: "home" }, "top");
+          }}
+          onSettingsChange={syncSettings}
+          t={t}
+          whisperDownloads={whisperDownloads}
+        />
+      ) : null}
+      <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
+    </div>
+  );
+}
+
+export default App;
