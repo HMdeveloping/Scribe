@@ -33,7 +33,7 @@ jobs:
             runner: macos-15
             target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin --bundles app,dmg"
-            alias: Scribe-macOS.dmg
+            alias: Scribe.dmg
             aliasGlob: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             artifactName: Scribe-macOS-dry-run
             artifactPath: src-tauri/target/aarch64-apple-darwin/release/bundle
@@ -41,7 +41,7 @@ jobs:
             runner: windows-latest
             target: x86_64-pc-windows-msvc
             args: "--bundles nsis"
-            alias: Scribe-Windows.exe
+            alias: Scribe.exe
             aliasGlob: src-tauri/target/release/bundle/nsis/*.exe
             artifactName: Scribe-Windows-dry-run
             artifactPath: src-tauri/target/release/bundle
