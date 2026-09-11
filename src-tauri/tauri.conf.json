@@ -47,7 +47,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFBMTkyNEUwNkI2NDJCRjUKUldUMUsyUnI0Q1FaR25oTEdGYmZOT1hZUC8rQzIvQmRObmpHRHdVUDVtV2h3RkhFUnVNdGZCbmEK",
       "endpoints": [
         "https://github.com/sportiyeet/Scribe/releases/latest/download/latest.json"
       ]
