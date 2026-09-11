@@ -133,7 +133,7 @@ jobs:
           releaseBody: |
             Initial Scribe desktop release.
 
-            This release may be unsigned or not notarized until platform signing is configured.
+            Scribe v0.1 is an early test release. Your operating system may ask you to confirm the app the first time you open it.
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
