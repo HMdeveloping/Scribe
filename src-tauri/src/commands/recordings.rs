@@ -914,16 +914,8 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("settings.json"))
 }
 
-fn model_definition(model_id: &str) -> &'static WhisperModelDefinition {
-    WHISPER_MODELS
-        .iter()
-        .find(|model| model.id == model_id)
-        .unwrap_or_else(|| {
-            WHISPER_MODELS
-                .iter()
-                .find(|model| model.id == DEFAULT_WHISPER_MODEL_ID)
-                .expect("default Whisper model must be configured")
-        })
+fn model_definition(model_id: &str) -> Option<&'static WhisperModelDefinition> {
+    WHISPER_MODELS.iter().find(|model| model.id == model_id)
 }
 
 fn load_settings(app: &AppHandle) -> LoadedSettings {
@@ -955,11 +947,11 @@ fn load_settings(app: &AppHandle) -> LoadedSettings {
         };
     };
 
-    if !WHISPER_MODELS
-        .iter()
-        .any(|model| model.id == settings.whisper_model)
-    {
-        settings.whisper_model = DEFAULT_WHISPER_MODEL_ID.to_string();
+    if model_definition(&settings.whisper_model).is_none() {
+        eprintln!(
+            "Scribe settings: unknown persisted Whisper model id '{}'",
+            settings.whisper_model
+        );
     }
     if !is_supported_language(&settings.transcription_language) {
         settings.transcription_language = if is_supported_language(&settings.language) {
@@ -1293,7 +1285,15 @@ fn resolve_whisper_cli(app: &AppHandle) -> Result<PathBuf, TranscriptionError> {
 
 fn resolve_whisper_model(app: &AppHandle) -> Result<PathBuf, TranscriptionError> {
     let settings = load_or_create_settings(app);
-    let model = model_definition(&settings.whisper_model);
+    let model = model_definition(&settings.whisper_model).ok_or_else(|| {
+        eprintln!(
+            "Scribe transcription: selected model id '{}' is unknown",
+            settings.whisper_model
+        );
+        TranscriptionError::ModelMissing(
+            "Selected transcription model is not installed.".to_string(),
+        )
+    })?;
     let model_path = app_data_dir(app)
         .map_err(TranscriptionError::Io)?
         .join("models")
@@ -1303,10 +1303,14 @@ fn resolve_whisper_model(app: &AppHandle) -> Result<PathBuf, TranscriptionError>
     if model_path.exists() {
         Ok(model_path)
     } else {
-        Err(TranscriptionError::ModelMissing(format!(
-            "{} is not installed. Place {} in the Scribe app data models/whisper directory.",
-            model.name, model.filename
-        )))
+        eprintln!(
+            "Scribe transcription: selected model '{}' is missing at {}",
+            model.id,
+            model_path.display()
+        );
+        Err(TranscriptionError::ModelMissing(
+            "Selected transcription model is not installed.".to_string(),
+        ))
     }
 }
 
@@ -2326,13 +2330,14 @@ pub fn rename_recording(
 }
 
 #[tauri::command]
-pub fn get_transcription_config(app: AppHandle) -> TranscriptionConfig {
+pub fn get_transcription_config(app: AppHandle) -> Result<TranscriptionConfig, String> {
     let settings = load_or_create_settings(&app);
-    let model = model_definition(&settings.whisper_model);
-    TranscriptionConfig {
+    let model = model_definition(&settings.whisper_model)
+        .ok_or_else(|| "Selected transcription model is not installed.".to_string())?;
+    Ok(TranscriptionConfig {
         model_filename: model.filename.to_string(),
         language: settings.transcription_language,
-    }
+    })
 }
 
 #[tauri::command]
@@ -2408,10 +2413,7 @@ pub fn cancel_whisper_model_download(model_id: String) -> Result<(), String> {
 }
 
 fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(), String> {
-    let model = model_definition(&model_id);
-    if model.id != model_id {
-        return Err("Unknown Whisper model".to_string());
-    }
+    let model = model_definition(&model_id).ok_or_else(|| "Unknown Whisper model".to_string())?;
     let _download_guard = acquire_model_download(model.id)?;
     clear_model_download_cancellation(model.id);
 
@@ -2508,10 +2510,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
 
 #[tauri::command]
 pub fn delete_whisper_model(app: AppHandle, model_id: String) -> Result<SettingsViewData, String> {
-    let model = model_definition(&model_id);
-    if model.id != model_id {
-        return Err("Unknown Whisper model".to_string());
-    }
+    let model = model_definition(&model_id).ok_or_else(|| "Unknown Whisper model".to_string())?;
     let settings = load_or_create_settings(&app);
     if settings.whisper_model == model.id {
         return Err("Select another installed model before deleting this one.".to_string());

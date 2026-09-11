@@ -306,13 +306,13 @@ export function RecordingView({ onStop, onDiscard, t, projectId }: { onStop: (me
 }
 
 type FinalizingViewProps = {
-  errorKind?: "model_missing" | "ffmpeg_missing" | "whisper_missing" | "transcription";
+  errorKind?: "model_missing" | "model_downloading" | "ffmpeg_missing" | "whisper_missing" | "transcription";
   errorMessage?: string;
-  modelFilename: string;
   progress?: TranscriptionProgress | null;
   t: TFunction;
   onRetry: () => void;
   onContinue: () => void;
+  onOpenTranscriptionSettings: () => void;
 };
 
 export type TranscriptionProgress = {
@@ -343,17 +343,21 @@ function formatProgressBytes(bytes: number) {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
-export function FinalizingView({ errorKind, errorMessage, modelFilename, progress, t, onRetry, onContinue }: FinalizingViewProps) {
+export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, onContinue, onOpenTranscriptionSettings }: FinalizingViewProps) {
   if (errorKind) {
     const title = errorKind === "model_missing"
-      ? errorMessage?.split(".")[0] ?? "Whisper model is not installed."
+      ? t("transcriptionModelNotInstalledTitle")
+      : errorKind === "model_downloading"
+        ? t("transcriptionModelDownloadingTitle")
       : errorKind === "ffmpeg_missing"
         ? t("ffmpegUnavailable")
         : errorKind === "whisper_missing"
           ? t("whisperUnavailable")
           : t("transcriptionFailed");
     const copy = errorKind === "model_missing"
-      ? errorMessage ?? `${t("modelNotInstalled")} ${modelFilename}`
+      ? t("transcriptionModelNotInstalledCopy")
+      : errorKind === "model_downloading"
+        ? errorMessage ?? t("modelDownloadingFriendly")
       : errorKind === "ffmpeg_missing"
         ? t("installFfmpeg")
         : errorKind === "whisper_missing"
@@ -364,7 +368,11 @@ export function FinalizingView({ errorKind, errorMessage, modelFilename, progres
       <h1>{title}</h1>
       <p>{copy}</p>
       <div className="transcription-error-actions">
-        <button className="pause-control" onClick={onRetry}>{t("retryTranscription")}</button>
+        {errorKind === "model_missing" ? (
+          <button className="pause-control" onClick={onOpenTranscriptionSettings}>{t("openTranscriptionSettings")}</button>
+        ) : (
+          <button className="pause-control" onClick={onRetry}>{t("retryTranscription")}</button>
+        )}
         <button className="stop-control" onClick={onContinue}>{t("continueWithoutTranscript")}</button>
       </div>
     </section>;

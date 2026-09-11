@@ -16,7 +16,7 @@ export type WhisperDownloadController = {
   queuedDownloads: string[];
   downloadFailures: Record<string, boolean>;
   downloadProgress: Record<string, DownloadProgress>;
-  requestModelDownload: (modelId: string) => void;
+  requestModelDownload: (modelId: string, settings?: SettingsViewData | null) => void;
   cancelActiveDownload: (modelId: string) => Promise<void>;
   removeQueuedDownload: (modelId: string) => void;
   clearDownloadFailure: (modelId: string) => void;
@@ -65,8 +65,8 @@ export function useWhisperModelDownloads({
     setQueuedDownloads(nextQueue);
   }
 
-  function isInstalledModel(modelId: string) {
-    return getSettings()?.models.some((model) => model.id === modelId && model.installed) ?? false;
+  function isInstalledModel(modelId: string, settings?: SettingsViewData | null) {
+    return (settings ?? getSettings())?.models.some((model) => model.id === modelId && model.installed) ?? false;
   }
 
   async function refreshSettings() {
@@ -74,8 +74,8 @@ export function useWhisperModelDownloads({
     onRefreshSettings(nextData);
   }
 
-  function requestModelDownload(modelId: string) {
-    if (isInstalledModel(modelId) || activeDownloadIdRef.current === modelId || queuedDownloadsRef.current.includes(modelId)) return;
+  function requestModelDownload(modelId: string, settings?: SettingsViewData | null) {
+    if (isInstalledModel(modelId, settings) || activeDownloadIdRef.current === modelId || queuedDownloadsRef.current.includes(modelId)) return;
     setDownloadFailures((current) => ({ ...current, [modelId]: false }));
     if (activeDownloadIdRef.current) {
       updateQueue([...queuedDownloadsRef.current, modelId]);

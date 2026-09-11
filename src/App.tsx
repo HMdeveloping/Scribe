@@ -43,18 +43,13 @@ import {
   RenameDialog,
 } from "./components/LibraryViews";
 import { ContextMenu, type ContextMenuAction, type ContextMenuState } from "./components/ContextMenu";
-import { SettingsView, type SettingsViewData, type UpdateProgress, type UpdateStatus } from "./components/SettingsView";
+import { localizedModel, SettingsView, type SettingsViewData, type UpdateProgress, type UpdateStatus } from "./components/SettingsView";
 import { Onboarding } from "./components/Onboarding";
 import { useWhisperModelDownloads } from "./hooks/useWhisperModelDownloads";
 import { createTranslator, currentGreetingKey, type AppLanguage } from "./i18n";
 import type { Project, RecordingDetails, RecordingSummary } from "./types/library";
 
-type TranscriptionErrorKind = "model_missing" | "ffmpeg_missing" | "whisper_missing" | "transcription";
-
-type TranscriptionConfig = {
-  modelFilename: string;
-  language: string;
-};
+type TranscriptionErrorKind = "model_missing" | "model_downloading" | "ffmpeg_missing" | "whisper_missing" | "transcription";
 
 type ClassifiedTranscriptionError = {
   kind: TranscriptionErrorKind;
@@ -113,6 +108,7 @@ function classifyTranscriptionError(reason: unknown): ClassifiedTranscriptionErr
     : undefined;
 
   if (kind === "model_missing") return { kind: "model_missing", message };
+  if (kind === "model_downloading") return { kind: "model_downloading", message };
   if (kind === "ffmpeg_missing") return { kind: "ffmpeg_missing", message };
   if (kind === "whisper_missing") return { kind: "whisper_missing", message };
   return { kind: "transcription", message };
@@ -159,10 +155,6 @@ function App() {
   const [renameProjectTarget, setRenameProjectTarget] = useState<Project | null>(null);
   const [renameRecordingTarget, setRenameRecordingTarget] = useState<RecordingSummary | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
-  const [transcriptionConfig, setTranscriptionConfig] = useState<TranscriptionConfig>({
-    modelFilename: "ggml-large-v3-turbo.bin",
-    language: "sl",
-  });
   const [appLanguage, setAppLanguage] = useState<AppLanguage>("en");
   const [transcriptionError, setTranscriptionError] = useState<ClassifiedTranscriptionError | undefined>();
   const [finalizingProgress, setFinalizingProgress] = useState<TranscriptionProgress | null>(null);
@@ -186,6 +178,7 @@ function App() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingDismissedThisSession, setOnboardingDismissedThisSession] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState("General");
 
   const currentNavEntry = useCallback((): NavEntry => ({
     view,
@@ -236,10 +229,6 @@ function App() {
 
   const syncSettings = useCallback((nextSettings: SettingsViewData) => {
     setSettingsData(nextSettings);
-    setTranscriptionConfig({
-      modelFilename: nextSettings.models.find((model) => model.id === nextSettings.settings.whisperModel)?.filename ?? "ggml-large-v3-turbo.bin",
-      language: nextSettings.settings.transcriptionLanguage,
-    });
     setAppLanguage(nextSettings.settings.appLanguage);
   }, []);
 
@@ -347,11 +336,6 @@ function App() {
   }
 
   useEffect(() => {
-    void invoke<TranscriptionConfig>("get_transcription_config")
-      .then((config) => {
-        setTranscriptionConfig(config);
-      })
-      .catch((reason) => console.warn("Scribe: unable to load transcription config", reason));
     void invoke<SettingsViewData>("load_scribe_settings")
       .then((settings) => {
         syncSettings(settings);
@@ -473,7 +457,19 @@ function App() {
     setFinalizing(true);
     setTranscriptionError(undefined);
     setFinalizingProgress({ stage: "preparing", durationSeconds: nextRecording.durationSeconds });
-    const selectedModel = settingsData?.models.find((model) => model.id === settingsData.settings.whisperModel);
+    let currentSettings = settingsData;
+    try {
+      const refreshedSettings = await invoke<SettingsViewData>("load_scribe_settings");
+      syncSettings(refreshedSettings);
+      currentSettings = refreshedSettings;
+    } catch (reason) {
+      console.error("Scribe: unable to refresh settings before transcription", reason);
+    }
+    const selectedModel = currentSettings?.models.find((model) => model.id === currentSettings.settings.whisperModel);
+    if (!selectedModel) {
+      setTranscriptionError({ kind: "model_missing" });
+      return;
+    }
     const selectedModelPending = selectedModel && !selectedModel.installed && (
       whisperDownloads.activeDownloadId === selectedModel.id ||
       whisperDownloads.queuedDownloads.includes(selectedModel.id) ||
@@ -481,7 +477,11 @@ function App() {
       whisperDownloads.downloadProgress[selectedModel.id]?.state === "installing"
     );
     if (selectedModelPending) {
-      setTranscriptionError({ kind: "model_missing", message: t("modelDownloadingFriendly") });
+      setTranscriptionError({ kind: "model_downloading", message: t("modelDownloadingFriendly") });
+      return;
+    }
+    if (!selectedModel.installed) {
+      setTranscriptionError({ kind: "model_missing" });
       return;
     }
     try {
@@ -846,9 +846,25 @@ function App() {
   }, [archivedRecordings, projectRecordings, recording, recordingProjectId, recordingProjectName, recordings, transcript]);
 
   const recentRecordings = useMemo(() => sortByLibraryRecency(recordings), [recordings]);
+  const activeModelDownload = useMemo(() => {
+    const activeId = whisperDownloads.activeDownloadId ?? whisperDownloads.queuedDownloads[0] ?? Object.entries(whisperDownloads.downloadFailures).find(([, failed]) => failed)?.[0];
+    if (!activeId) return null;
+    const model = settingsData?.models.find((item) => item.id === activeId);
+    return {
+      model,
+      progress: whisperDownloads.downloadProgress[activeId],
+      queued: whisperDownloads.queuedDownloads.includes(activeId),
+      failed: whisperDownloads.downloadFailures[activeId],
+    };
+  }, [settingsData?.models, whisperDownloads.activeDownloadId, whisperDownloads.downloadFailures, whisperDownloads.downloadProgress, whisperDownloads.queuedDownloads]);
 
   function toggleSidebar() {
     setSidebarMode(sidebarCollapsed ? "expanded" : "collapsed");
+  }
+
+  function openTranscriptionSettings() {
+    setSettingsInitialSection("Transcription");
+    navigate({ view: "settings" }, "top");
   }
 
   return (
@@ -937,7 +953,10 @@ function App() {
 
         <button
           className={`settings-button${view === "settings" ? " active" : ""}`}
-          onClick={() => navigate({ view: "settings" }, "top")}
+          onClick={() => {
+            setSettingsInitialSection("General");
+            navigate({ view: "settings" }, "top");
+          }}
           title={sidebarCollapsed ? t("settings") : undefined}
         >
           <Settings size={18} strokeWidth={1.8} />
@@ -949,7 +968,6 @@ function App() {
         {finalizing ? <FinalizingView
           errorKind={transcriptionError?.kind}
           errorMessage={transcriptionError?.message}
-          modelFilename={transcriptionConfig.modelFilename}
           progress={finalizingProgress}
           t={t}
           onRetry={() => {
@@ -959,6 +977,11 @@ function App() {
             setFinalizing(false);
             setFinalizingProgress(null);
             setView("transcript");
+          }}
+          onOpenTranscriptionSettings={() => {
+            setFinalizing(false);
+            setFinalizingProgress(null);
+            openTranscriptionSettings();
           }}
         /> : view === "recording" ? (
           <RecordingView t={t} projectId={recordingProjectId} onStop={(nextRecording) => {
@@ -1040,6 +1063,7 @@ function App() {
         : view === "settings" ? <SettingsView
           appVersion={appVersion}
           initialData={settingsData}
+          initialSection={settingsInitialSection}
           onCheckForUpdates={() => void checkForUpdates()}
           onShowWelcomeGuide={() => {
             setOnboardingDismissedThisSession(false);
@@ -1084,6 +1108,25 @@ function App() {
                 </div>
               </button>
             </div>
+            {activeModelDownload ? (
+              <button className="home-download-status" onClick={openTranscriptionSettings}>
+                <span>
+                  <strong>{activeModelDownload.model ? localizedModel(activeModelDownload.model, t).name : t("whisperModel")}</strong>
+                  <small>
+                    {activeModelDownload.failed
+                      ? t("downloadFailed")
+                      : activeModelDownload.progress?.state === "installing"
+                        ? t("installingModel")
+                        : activeModelDownload.queued
+                          ? t("queued")
+                          : activeModelDownload.progress?.percent !== undefined
+                            ? `${t("downloading")} ${Math.round(activeModelDownload.progress.percent)}%`
+                            : t("downloading")}
+                  </small>
+                </span>
+                <ArrowRight size={16} />
+              </button>
+            ) : null}
           </section>
 
           <HomeRecentRecordings

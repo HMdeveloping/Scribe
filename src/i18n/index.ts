@@ -69,6 +69,10 @@ const en = {
   retryTranscription: "Retry transcription",
   continueWithoutTranscript: "Continue without transcript",
   modelNotInstalled: "Whisper model is not installed.",
+  transcriptionModelNotInstalledTitle: "Transcription model isn't installed",
+  transcriptionModelNotInstalledCopy: "Install a transcription model in Settings → Transcription, then try again.",
+  transcriptionModelDownloadingTitle: "Transcription model is downloading",
+  openTranscriptionSettings: "Open Transcription Settings",
   ffmpegUnavailable: "FFmpeg is unavailable.",
   whisperUnavailable: "whisper.cpp is unavailable.",
   installFfmpeg: "Install FFmpeg or place it in Scribe's app data bin/ffmpeg folder for development.",
@@ -93,6 +97,7 @@ const en = {
   localWhisperSettings: "Local Whisper settings for final transcripts.",
   whisperModel: "Whisper model",
   loadingModels: "Loading models...",
+  selectModel: "Select model",
   chooseWhisperModel: "Choose the local model Scribe uses for final transcription.",
   installed: "Installed",
   notInstalled: "Not installed",
@@ -265,8 +270,20 @@ const onboardingTranslations: Record<Exclude<AppLanguage, "en">, Partial<Diction
   pl: { continue: "Dalej", downloadAndContinue: "Pobierz i kontynuuj", welcomeToScribe: "Witamy w Scribe", onboardingWelcomeCopy: "Nagrywaj, importuj i transkrybuj audio lokalnie.", onboardingRecordImport: "Nagrywaj lub importuj audio", onboardingLocalTranscription: "Transkrybuj lokalnie na urządzeniu", onboardingPrivateRecordings: "Nagrania zostają na komputerze", chooseYourLanguages: "Wybierz języki", onboardingLanguagesCopy: "Ustaw język aplikacji i język transkrypcji.", chooseTranscriptionModel: "Wybierz model transkrypcji", onboardingModelCopy: "Możesz używać Scribe, gdy model pobiera się w tle.", skipForNow: "Pomiń na razie", showWelcomeGuide: "Pokaż przewodnik powitalny", showWelcomeGuideCopy: "Otwórz ponownie konfigurację początkową.", modelDownloadingFriendly: "Model transkrypcji nadal się pobiera. Możesz dalej używać Scribe." },
 };
 
+const modelRecoveryTranslations: Record<Exclude<AppLanguage, "en">, Partial<Dictionary>> = {
+  sl: { selectModel: "Izberite model", transcriptionModelNotInstalledTitle: "Model za prepisovanje ni nameščen", transcriptionModelNotInstalledCopy: "Namestite model za prepisovanje v Nastavitve → Prepisovanje in poskusite znova.", transcriptionModelDownloadingTitle: "Model za prepisovanje se prenaša", openTranscriptionSettings: "Odpri nastavitve prepisovanja" },
+  de: { selectModel: "Modell wählen", transcriptionModelNotInstalledTitle: "Transkriptionsmodell ist nicht installiert", transcriptionModelNotInstalledCopy: "Installieren Sie ein Transkriptionsmodell unter Einstellungen → Transkription und versuchen Sie es erneut.", transcriptionModelDownloadingTitle: "Transkriptionsmodell wird heruntergeladen", openTranscriptionSettings: "Transkriptionseinstellungen öffnen" },
+  es: { selectModel: "Seleccionar modelo", transcriptionModelNotInstalledTitle: "El modelo de transcripción no está instalado", transcriptionModelNotInstalledCopy: "Instala un modelo de transcripción en Ajustes → Transcripción e inténtalo de nuevo.", transcriptionModelDownloadingTitle: "El modelo de transcripción se está descargando", openTranscriptionSettings: "Abrir ajustes de transcripción" },
+  it: { selectModel: "Seleziona modello", transcriptionModelNotInstalledTitle: "Il modello di trascrizione non è installato", transcriptionModelNotInstalledCopy: "Installa un modello di trascrizione in Impostazioni → Trascrizione, quindi riprova.", transcriptionModelDownloadingTitle: "Il modello di trascrizione è in download", openTranscriptionSettings: "Apri impostazioni trascrizione" },
+  hr: { selectModel: "Odaberite model", transcriptionModelNotInstalledTitle: "Model transkripcije nije instaliran", transcriptionModelNotInstalledCopy: "Instalirajte model transkripcije u Postavke → Transkripcija, zatim pokušajte ponovno.", transcriptionModelDownloadingTitle: "Model transkripcije se preuzima", openTranscriptionSettings: "Otvori postavke transkripcije" },
+  fr: { selectModel: "Choisir un modèle", transcriptionModelNotInstalledTitle: "Le modèle de transcription n'est pas installé", transcriptionModelNotInstalledCopy: "Installez un modèle de transcription dans Réglages → Transcription, puis réessayez.", transcriptionModelDownloadingTitle: "Le modèle de transcription est en téléchargement", openTranscriptionSettings: "Ouvrir les réglages de transcription" },
+  pt: { selectModel: "Selecionar modelo", transcriptionModelNotInstalledTitle: "O modelo de transcrição não está instalado", transcriptionModelNotInstalledCopy: "Instale um modelo de transcrição em Definições → Transcrição e tente novamente.", transcriptionModelDownloadingTitle: "O modelo de transcrição está a transferir", openTranscriptionSettings: "Abrir definições de transcrição" },
+  nl: { selectModel: "Model kiezen", transcriptionModelNotInstalledTitle: "Transcriptiemodel is niet geïnstalleerd", transcriptionModelNotInstalledCopy: "Installeer een transcriptiemodel via Instellingen → Transcriptie en probeer het opnieuw.", transcriptionModelDownloadingTitle: "Transcriptiemodel wordt gedownload", openTranscriptionSettings: "Transcriptie-instellingen openen" },
+  pl: { selectModel: "Wybierz model", transcriptionModelNotInstalledTitle: "Model transkrypcji nie jest zainstalowany", transcriptionModelNotInstalledCopy: "Zainstaluj model transkrypcji w Ustawienia → Transkrypcja, a potem spróbuj ponownie.", transcriptionModelDownloadingTitle: "Model transkrypcji jest pobierany", openTranscriptionSettings: "Otwórz ustawienia transkrypcji" },
+};
+
 for (const language of languages) {
-  if (language.code !== "en") Object.assign(dictionaries[language.code], v01ProgressTranslations[language.code], onboardingTranslations[language.code]);
+  if (language.code !== "en") Object.assign(dictionaries[language.code], v01ProgressTranslations[language.code], onboardingTranslations[language.code], modelRecoveryTranslations[language.code]);
 }
 
 export function createTranslator(language: string): TFunction {

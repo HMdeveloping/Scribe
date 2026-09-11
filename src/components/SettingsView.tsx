@@ -108,6 +108,7 @@ function LanguagePicker({
 export function SettingsView({
   appVersion,
   initialData,
+  initialSection = "General",
   onSettingsChange,
   onCheckForUpdates,
   onShowWelcomeGuide,
@@ -119,6 +120,7 @@ export function SettingsView({
 }: {
   appVersion: string;
   initialData: SettingsViewData | null;
+  initialSection?: string;
   onSettingsChange: (settings: SettingsViewData) => void;
   onCheckForUpdates: () => void;
   onShowWelcomeGuide: () => void;
@@ -129,7 +131,7 @@ export function SettingsView({
   whisperDownloads: WhisperDownloadController;
 }) {
   const [data, setData] = useState<SettingsViewData | null>(null);
-  const [activeSection, setActiveSection] = useState("General");
+  const [activeSection, setActiveSection] = useState(initialSection);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [languagePickerOpen, setLanguagePickerOpen] = useState(false);
   const [transcriptionLanguagePickerOpen, setTranscriptionLanguagePickerOpen] = useState(false);
@@ -141,6 +143,10 @@ export function SettingsView({
   useEffect(() => {
     if (initialData) setData(initialData);
   }, [initialData]);
+
+  useEffect(() => {
+    setActiveSection(initialSection);
+  }, [initialSection]);
 
   useEffect(() => {
     let disposed = false;
@@ -160,7 +166,7 @@ export function SettingsView({
   }, [onSettingsChange]);
 
   const selectedModel = useMemo(() => {
-    return data?.models.find((model) => model.selected) ?? data?.models[0];
+    return data?.models.find((model) => model.selected) ?? null;
   }, [data]);
   async function chooseModel(modelId: string) {
     setSavingModel(modelId);
@@ -280,10 +286,10 @@ export function SettingsView({
           <button className="settings-row" onClick={() => setPickerOpen(true)} disabled={!data}>
             <span>
               <strong>{t("whisperModel")}</strong>
-              <small>{selectedModelCopy?.description ?? t("loadingModels")}</small>
+              <small>{selectedModelCopy?.description ?? t("chooseWhisperModel")}</small>
             </span>
             <span className="settings-row-value">
-              {selectedModelCopy?.name ?? t("loadingModels")}
+              {selectedModelCopy?.name ?? t("selectModel")}
               <ChevronRight size={17} />
             </span>
           </button>

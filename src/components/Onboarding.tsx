@@ -75,7 +75,7 @@ export function Onboarding({
       });
       const nextModel = nextData.models.find((model) => model.id === selectedModel.id);
       if (download && nextModel && !nextModel.installed) {
-        whisperDownloads.requestModelDownload(nextModel.id);
+        whisperDownloads.requestModelDownload(nextModel.id, nextData);
       }
       onClose();
     } finally {

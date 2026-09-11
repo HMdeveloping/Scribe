@@ -649,6 +649,50 @@ button {
   border-color: #d9d9dc;
 }
 
+.home-download-status {
+  width: min(520px, 100%);
+  min-height: 54px;
+  margin: 18px auto 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(73, 103, 242, 0.14);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #202123;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(32, 33, 35, 0.045);
+}
+
+.home-download-status:hover {
+  border-color: rgba(73, 103, 242, 0.26);
+}
+
+.home-download-status span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.home-download-status strong {
+  color: #242426;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.home-download-status small {
+  color: #6b6b70;
+  font-size: 12px;
+}
+
+.home-download-status svg {
+  flex: 0 0 auto;
+  color: var(--scribe-indigo);
+}
+
 .secondary-action-icon {
   width: 46px;
   height: 46px;
