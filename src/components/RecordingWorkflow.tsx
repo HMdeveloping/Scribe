@@ -450,10 +450,6 @@ type FlatWord = {
   end: number;
 };
 
-const WORD_START_TOLERANCE_SECONDS = 0.06;
-const WORD_END_TOLERANCE_SECONDS = 0.12;
-const TINY_WORD_GAP_SECONDS = 0.16;
-
 function buildFlatWordIndex(segments: TranscriptSegment[]): FlatWord[] {
   const flat: FlatWord[] = [];
   segments.forEach((segment, segmentIndex) => {
@@ -466,28 +462,17 @@ function buildFlatWordIndex(segments: TranscriptSegment[]): FlatWord[] {
   return flat;
 }
 
-function isTimeInWordWindow(flatWords: FlatWord[], index: number, currentTime: number) {
-  const word = flatWords[index];
-  const previous = flatWords[index - 1];
-  const next = flatWords[index + 1];
-  const toleratedStart = Math.max(0, word.start - WORD_START_TOLERANCE_SECONDS);
-  const toleratedEnd = word.end + WORD_END_TOLERANCE_SECONDS;
-  const start = previous && word.start - previous.end <= TINY_WORD_GAP_SECONDS
-    ? Math.min(toleratedStart, previous.end)
-    : toleratedStart;
-  const end = next && next.start - word.end <= TINY_WORD_GAP_SECONDS
-    ? Math.max(toleratedEnd, next.start)
-    : toleratedEnd;
-
-  return currentTime >= start && currentTime < end;
-}
-
 function findActiveWordIndex(flatWords: FlatWord[], currentTime: number, lastIndex: number): number {
   if (flatWords.length === 0) return -1;
+  const isActiveAtTime = (index: number) => {
+    const word = flatWords[index];
+    return currentTime >= word.start && currentTime < word.end;
+  };
+
   if (lastIndex >= 0 && lastIndex < flatWords.length) {
-    if (isTimeInWordWindow(flatWords, lastIndex, currentTime)) return lastIndex;
-    if (lastIndex + 1 < flatWords.length && isTimeInWordWindow(flatWords, lastIndex + 1, currentTime)) return lastIndex + 1;
-    if (lastIndex > 0 && isTimeInWordWindow(flatWords, lastIndex - 1, currentTime)) return lastIndex - 1;
+    if (isActiveAtTime(lastIndex)) return lastIndex;
+    if (lastIndex + 1 < flatWords.length && isActiveAtTime(lastIndex + 1)) return lastIndex + 1;
+    if (lastIndex > 0 && isActiveAtTime(lastIndex - 1)) return lastIndex - 1;
   }
 
   let lo = 0;
@@ -504,22 +489,6 @@ function findActiveWordIndex(flatWords: FlatWord[], currentTime: number, lastInd
     }
   }
 
-  const nextIndex = Math.min(lo, flatWords.length - 1);
-  const previousIndex = Math.max(hi, 0);
-  const previous = flatWords[previousIndex];
-  const next = flatWords[nextIndex];
-  if (
-    previous
-    && next
-    && currentTime >= previous.end
-    && currentTime < next.start
-    && next.start - previous.end <= TINY_WORD_GAP_SECONDS
-  ) {
-    const gapMidpoint = previous.end + (next.start - previous.end) / 2;
-    return currentTime < gapMidpoint ? previousIndex : nextIndex;
-  }
-  if (previous && isTimeInWordWindow(flatWords, previousIndex, currentTime)) return previousIndex;
-  if (next && isTimeInWordWindow(flatWords, nextIndex, currentTime)) return nextIndex;
   return -1;
 }
 
@@ -540,6 +509,9 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
   const programmaticScrollTimeoutRef = useRef<number | null>(null);
   const [isFollowing, setIsFollowing] = useState(true);
   const activeWordRef = useRef<HTMLSpanElement | null>(null);
+  const activeLineRef = useRef<HTMLParagraphElement | null>(null);
+  const centerFollowActiveRef = useRef(false);
+  const scrollFrameRef = useRef<number | null>(null);
 
   const updateActiveWord = useCallback((time: number) => {
     const newIndex = findActiveWordIndex(flatWords, time, lastIndexRef.current);
@@ -581,44 +553,86 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
     if (programmaticScrollTimeoutRef.current !== null) {
       window.clearTimeout(programmaticScrollTimeoutRef.current);
     }
+    if (scrollFrameRef.current !== null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+    }
   }, []);
 
-  useEffect(() => {
-    if (isFollowing && activeWordRef.current && containerRef.current) {
-      const container = containerRef.current;
-      const word = activeWordRef.current;
-      const containerRect = container.getBoundingClientRect();
-      const wordRect = word.getBoundingClientRect();
-      const isAbove = wordRect.top < containerRect.top + 40;
-      const isBelow = wordRect.bottom > containerRect.bottom - 40;
-      if (isAbove || isBelow) {
-        programmaticScrollRef.current = true;
-        word.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        if (programmaticScrollTimeoutRef.current !== null) {
-          window.clearTimeout(programmaticScrollTimeoutRef.current);
-        }
-        programmaticScrollTimeoutRef.current = window.setTimeout(() => {
-          programmaticScrollRef.current = false;
-        }, 500);
-      }
+  const markProgrammaticScroll = useCallback(() => {
+    programmaticScrollRef.current = true;
+    if (programmaticScrollTimeoutRef.current !== null) {
+      window.clearTimeout(programmaticScrollTimeoutRef.current);
     }
-  }, [activeWordIndex, isFollowing]);
+    programmaticScrollTimeoutRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+    }, 700);
+  }, []);
+
+  const scrollActiveLine = useCallback((behavior: ScrollBehavior = "auto", forceCenter = false) => {
+    const container = containerRef.current;
+    const line = activeLineRef.current;
+    if (!container || !line) return;
+
+    if (scrollFrameRef.current !== null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+    }
+
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const containerRect = container.getBoundingClientRect();
+      const lineRect = line.getBoundingClientRect();
+      const lineCenter = lineRect.top + lineRect.height / 2;
+      const viewportCenter = containerRect.top + container.clientHeight / 2;
+      const bottomGuard = containerRect.bottom - Math.min(64, container.clientHeight * 0.18);
+      const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+
+      if (forceCenter) {
+        centerFollowActiveRef.current = true;
+      } else if (!centerFollowActiveRef.current && lineCenter >= viewportCenter) {
+        centerFollowActiveRef.current = true;
+      }
+
+      let nextScrollTop = container.scrollTop;
+      if (centerFollowActiveRef.current) {
+        nextScrollTop += lineCenter - viewportCenter;
+      } else if (lineRect.bottom > bottomGuard) {
+        nextScrollTop += lineRect.bottom - bottomGuard;
+      } else {
+        return;
+      }
+
+      nextScrollTop = Math.max(0, Math.min(maxScrollTop, nextScrollTop));
+      if (Math.abs(nextScrollTop - container.scrollTop) < 8) return;
+      markProgrammaticScroll();
+      container.scrollTo({ top: nextScrollTop, behavior });
+    });
+  }, [markProgrammaticScroll]);
+
+  useEffect(() => {
+    if (!isFollowing || activeWordIndex < 0) return;
+    scrollActiveLine("auto");
+  }, [activeWordIndex, isFollowing, scrollActiveLine]);
 
   const handleUserScroll = useCallback(() => {
     if (programmaticScrollRef.current) return;
     setIsFollowing(false);
+    centerFollowActiveRef.current = false;
   }, []);
 
   const handleWordClick = useCallback((word: FlatWord) => {
+    centerFollowActiveRef.current = true;
+    setIsFollowing(true);
     player.seekTo(word.start);
     updateActiveWord(word.start);
-  }, [player.seekTo, updateActiveWord]);
+    window.setTimeout(() => scrollActiveLine("smooth", true), 0);
+  }, [player.seekTo, scrollActiveLine, updateActiveWord]);
 
   const resumeFollowing = useCallback(() => {
+    centerFollowActiveRef.current = true;
     setIsFollowing(true);
     updateActiveWord(player.readCurrentTime());
-    window.setTimeout(() => activeWordRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 0);
-  }, [player.readCurrentTime, updateActiveWord]);
+    window.setTimeout(() => scrollActiveLine("smooth", true), 0);
+  }, [player.readCurrentTime, scrollActiveLine, updateActiveWord]);
 
   const hasTimedWords = flatWords.length > 0;
 
@@ -633,7 +647,11 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
         onScroll={handleUserScroll}
       >
         {transcript.segments.map((segment, segmentIndex) => (
-          <p key={`segment-${segmentIndex}`} className="transcript-segment">
+          <p
+            key={`segment-${segmentIndex}`}
+            ref={activeWordIndex >= 0 && flatWords[activeWordIndex]?.segmentIndex === segmentIndex ? activeLineRef : null}
+            className="transcript-segment"
+          >
             {(segment.words?.length ?? 0) > 0 ? (
               segment.words!.map((word, wordIndex) => {
                 const flatIndex = wordIndexMap.get(`${segmentIndex}:${wordIndex}`) ?? -1;

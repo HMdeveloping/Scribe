@@ -61,6 +61,10 @@ export function useMicrophoneLevel(paused: boolean) {
       // Skip the discarded effect in React StrictMode before requesting hardware.
       await Promise.resolve();
       if (disposed) return;
+      const requestedAt = performance.now();
+      console.info("[recording-lifecycle] get_user_media_requested", {
+        performanceNowMs: Math.round(requestedAt),
+      });
       try {
         if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
           if (import.meta.env.DEV) console.error("Scribe: microphone API unavailable", {
@@ -73,10 +77,17 @@ export function useMicrophoneLevel(paused: boolean) {
           return;
         }
         const acquired = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const acquiredAt = performance.now();
         if (disposed) {
           acquired.getTracks().forEach((track) => track.stop());
           return;
         }
+        console.info("[recording-lifecycle] get_user_media_ready", {
+          audioTracks: acquired.getAudioTracks().length,
+          active: acquired.active,
+          latencyMs: Math.round(acquiredAt - requestedAt),
+          performanceNowMs: Math.round(acquiredAt),
+        });
         stream = acquired;
         setMediaStream(acquired);
         stream.getAudioTracks().forEach((track) => {
@@ -90,6 +101,11 @@ export function useMicrophoneLevel(paused: boolean) {
         // Do not connect to the speakers: analysis must not produce feedback.
         await context.resume();
         if (disposed) return;
+        console.info("[recording-lifecycle] audio_context_ready", {
+          state: context.state,
+          latencyMs: Math.round(performance.now() - acquiredAt),
+          performanceNowMs: Math.round(performance.now()),
+        });
         setStatus("active");
         const samples = new Uint8Array(analyser.fftSize);
         function update(time: number) {

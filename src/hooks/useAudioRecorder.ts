@@ -8,7 +8,7 @@ const MIME_TYPE_CANDIDATES = [
   "audio/mp4",
 ];
 
-const CHUNK_TIMESLICE_MS = 250;
+const CHUNK_TIMESLICE_MS = 100;
 
 type RecorderStatus = "idle" | "preparing" | "recording" | "paused" | "stopped" | "error";
 
@@ -28,6 +28,7 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
   const firstChunkReceivedRef = useRef(false);
   const startRequestedAtRef = useRef<number | null>(null);
   const chunkCountRef = useRef(0);
+  const earlyFlushFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!stream || recorderRef.current) return;
@@ -91,6 +92,21 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
           startDelayMs: startRequestedAtRef.current === null ? null : Math.round(startedAtRef.current - startRequestedAtRef.current),
           performanceNowMs: Math.round(startedAtRef.current),
         });
+        earlyFlushFrameRef.current = requestAnimationFrame(() => {
+          earlyFlushFrameRef.current = null;
+          if (!recorder || recorder.state !== "recording") return;
+          try {
+            console.info("[recording-lifecycle] media_recorder_request_data_after_start", {
+              state: recorder.state,
+              elapsedRecordingDurationMs: startedAtRef.current === null ? 0 : Math.round(performance.now() - startedAtRef.current),
+              chunksBeforeRequest: chunksRef.current.length,
+              performanceNowMs: Math.round(performance.now()),
+            });
+            recorder.requestData();
+          } catch (reason) {
+            console.warn("Scribe: early MediaRecorder requestData failed", reason);
+          }
+        });
         setStatus("recording");
       };
       recorder.onpause = () => setStatus("paused");
@@ -118,6 +134,10 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
     }
 
     return () => {
+      if (earlyFlushFrameRef.current !== null) {
+        cancelAnimationFrame(earlyFlushFrameRef.current);
+        earlyFlushFrameRef.current = null;
+      }
       if (recorder && recorder.state !== "inactive" && !stopPromiseRef.current) {
         recorder.stop();
       }
@@ -165,6 +185,10 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
       recorder.addEventListener("error", fail, { once: true });
 
       try {
+        if (earlyFlushFrameRef.current !== null) {
+          cancelAnimationFrame(earlyFlushFrameRef.current);
+          earlyFlushFrameRef.current = null;
+        }
         if (recorder.state === "inactive") {
           recorder.removeEventListener("stop", finalize);
           finalize();
@@ -188,6 +212,10 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
 
   const discard = useCallback(() => {
     const recorder = recorderRef.current;
+    if (earlyFlushFrameRef.current !== null) {
+      cancelAnimationFrame(earlyFlushFrameRef.current);
+      earlyFlushFrameRef.current = null;
+    }
     chunksRef.current = [];
     stopPromiseRef.current = null;
     if (recorder && recorder.state !== "inactive") {
@@ -207,6 +235,10 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
   useEffect(() => {
     return () => {
       const recorder = recorderRef.current;
+      if (earlyFlushFrameRef.current !== null) {
+        cancelAnimationFrame(earlyFlushFrameRef.current);
+        earlyFlushFrameRef.current = null;
+      }
       if (recorder && recorder.state !== "inactive" && !stopPromiseRef.current) {
         recorder.stop();
       }
