@@ -491,6 +491,11 @@ jobs:
           TAG_NAME: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
+          # Replace stable website aliases with fresh release assets instead of
+          # relying only on --clobber, which can leave latest/download clients
+          # seeing a stale asset through GitHub's release-asset cache.
+          gh release delete-asset "$TAG_NAME" Scribe.dmg --yes || true
+          gh release delete-asset "$TAG_NAME" Scribe.exe --yes || true
           gh release upload "$TAG_NAME" \
             release-upload/*.dmg \
             release-upload/*.exe \

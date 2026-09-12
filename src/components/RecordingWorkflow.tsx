@@ -59,10 +59,10 @@ type SaveRecordingResult = {
   };
 };
 
-type RecordingPhase = "recording" | "paused" | "stopping" | "save-error" | "too-short" | "discarding";
+type RecordingPhase = "preparing" | "recording" | "paused" | "stopping" | "save-error" | "too-short" | "discarding";
 
 export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, projectId }: { onStop: (metadata: RecordingMetadata) => void; onSaved: (details: SaveRecordingResult["details"]) => void; onDiscard: () => void; onStartNew: () => void; t: TFunction; projectId?: string | null }) {
-  const [phase, setPhase] = useState<RecordingPhase>("recording");
+  const [phase, setPhase] = useState<RecordingPhase>("preparing");
   const [elapsedMs, setElapsedMs] = useState(0);
   const [pendingSave, setPendingSave] = useState<{ blob: Blob; metadata: RecordingMetadata } | null>(null);
   const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
@@ -70,7 +70,8 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
   const isStopping = phase === "stopping";
   const isSaveError = phase === "save-error";
   const isTooShort = phase === "too-short";
-  const isCaptureActive = phase === "recording" || phase === "paused";
+  const isPreparing = phase === "preparing";
+  const isCaptureActive = phase === "preparing" || phase === "recording" || phase === "paused";
   const microphone = useMicrophoneLevel(isPaused || !isCaptureActive);
   const recorder = useAudioRecorder(microphone.stream, isPaused || !isCaptureActive);
   const accumulatedElapsedMs = useRef(0);
@@ -81,6 +82,7 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
 
   useEffect(() => {
     mountedRef.current = true;
+    console.info("[recording-lifecycle] start_requested");
     console.info("[recording-timer] session start");
     accumulatedElapsedMs.current = 0;
     startedAtMs.current = null;
@@ -97,7 +99,12 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
   }, []);
 
   useEffect(() => {
-    if (phase !== "recording" || microphone.status !== "active") return;
+    if (phase !== "preparing" || recorder.status !== "recording") return;
+    setPhase("recording");
+  }, [phase, recorder.status]);
+
+  useEffect(() => {
+    if (phase !== "recording") return;
     startedAtMs.current = performance.now();
     console.info("[recording-timer] startedAt:", `${startedAtMs.current} ms`);
     const interval = window.setInterval(() => {
@@ -113,7 +120,7 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
         startedAtMs.current = null;
       }
     };
-  }, [phase, microphone.status]);
+  }, [phase]);
 
   function snapshotElapsedMs() {
     if (startedAtMs.current !== null) {
@@ -174,7 +181,18 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
 
   async function stopAndSave() {
     if (stopStarted.current) return;
+    if (recorder.status !== "recording" && recorder.status !== "paused") {
+      console.warn("[recording-lifecycle] stop_requested_before_recorder_ready", {
+        recorderStatus: recorder.status,
+        microphoneStatus: microphone.status,
+      });
+      return;
+    }
     stopStarted.current = true;
+    console.info("[recording-lifecycle] stop_requested", {
+      recorderStatus: recorder.status,
+      elapsedMs,
+    });
     const sessionToken = sessionTokenRef.current;
     setPhase("stopping");
 
@@ -256,13 +274,13 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
           }} />
         ))}
       </div>
-      <p className={`recording-status${microphone.status === "active" && phase === "recording" ? " is-listening" : ""}`} role="status">
+      <p className={`recording-status${recorder.status === "recording" && phase === "recording" ? " is-listening" : ""}`} role="status">
         <span />{isTooShort ? t("recordingTooShort")
-          : isSaveError ? t("saveFailed")
           : recorder.status === "error" ? t("recorderError")
+          : isSaveError ? t("saveFailed")
           : isStopping ? t("savingRecording")
           : microphone.status === "error" ? t(microphone.error || "microphoneError")
-          : microphone.status === "requesting" ? t("waitingMic")
+          : microphone.status === "requesting" || isPreparing ? t("waitingMic")
           : isPaused ? t("paused") : t("listening")}
       </p>
       {isSaveError ? (
@@ -281,7 +299,7 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
       </div>
       {isCaptureActive ? (
         <div className="recording-controls">
-          <button className="pause-control" disabled={microphone.status !== "active"} onClick={() => {
+          <button className="pause-control" disabled={recorder.status !== "recording" && recorder.status !== "paused"} onClick={() => {
             if (phase === "recording") {
               snapshotElapsedMs();
               console.info("[recording-timer] pause started");
@@ -294,7 +312,7 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
             {isPaused ? <Play size={18} /> : <Pause size={18} />}
             {isPaused ? t("resume") : t("pause")}
           </button>
-          <button className="stop-control" disabled={microphone.status !== "active"} onClick={stopAndSave}>
+          <button className="stop-control" disabled={recorder.status !== "recording" && recorder.status !== "paused"} onClick={stopAndSave}>
             <Square size={16} fill="currentColor" />{t("stop")}
           </button>
           <button className="discard-control" onClick={requestDiscard}>
