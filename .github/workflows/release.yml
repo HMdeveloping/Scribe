@@ -356,6 +356,23 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           mkdir -p release-upload
+          release_version="${TAG_NAME#v}"
+          package_version="$(jq -r '.version' package.json)"
+          tauri_version="$(jq -r '.version' src-tauri/tauri.conf.json)"
+          cargo_version="$(awk -F ' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' src-tauri/Cargo.toml)"
+
+          if [ "$release_version" != "$package_version" ]; then
+            echo "Release tag version ($release_version) does not match package.json version ($package_version)"
+            exit 1
+          fi
+          if [ "$release_version" != "$tauri_version" ]; then
+            echo "Release tag version ($release_version) does not match tauri.conf.json version ($tauri_version)"
+            exit 1
+          fi
+          if [ "$release_version" != "$cargo_version" ]; then
+            echo "Release tag version ($release_version) does not match Cargo.toml version ($cargo_version)"
+            exit 1
+          fi
 
           mac_tar_candidates=(release-artifacts/Scribe-macOS-release/macos/*.app.tar.gz)
           mac_sig_candidates=(release-artifacts/Scribe-macOS-release/macos/*.app.tar.gz.sig)
@@ -424,7 +441,7 @@ jobs:
           fi
 
           jq -n \
-            --arg version "0.1.4" \
+            --arg version "$release_version" \
             --arg notes "Initial Scribe desktop release.\n\nScribe v0.1 is an early test release. Your operating system may ask you to confirm the app the first time you open it." \
             --arg pub_date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
             --arg mac_url "https://github.com/${REPOSITORY}/releases/download/${TAG_NAME}/${mac_tar_name}" \
@@ -452,14 +469,14 @@ jobs:
             }' > release-upload/latest.json
 
           jq -e '
-            .version == "0.1.4" and
+            .version == $version and
             (.platforms["darwin-aarch64"].url | endswith(".app.tar.gz")) and
             (.platforms["darwin-aarch64"].signature | length > 0) and
             (.platforms["windows-x86_64"].url | endswith(".exe")) and
             (.platforms["windows-x86_64"].signature | length > 0) and
             (.platforms["windows-x86_64-nsis"].url | endswith(".exe")) and
             (.platforms["windows-x86_64-nsis"].signature | length > 0)
-          ' release-upload/latest.json
+          ' --arg version "$release_version" release-upload/latest.json
 
           echo "Prepared release assets:"
           find release-upload -maxdepth 1 -type f -print | sort
