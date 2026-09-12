@@ -310,22 +310,72 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          volume_path=""
+          cleanup() {
+            local original_status=$?
+            if [ -n "${volume_path:-}" ] && [ -d "$volume_path" ]; then
+              if hdiutil detach "$volume_path"; then
+                echo "PASS: DMG ejected"
+              else
+                echo "FAIL: DMG eject failed"
+                if [ "$original_status" -eq 0 ]; then
+                  exit 1
+                fi
+              fi
+            fi
+            exit "$original_status"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "FAIL: $1"
+            exit 1
+          }
+
+          pass() {
+            echo "PASS: $1"
+          }
+
+          shopt -s nullglob
           dmg_candidates=(src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg)
           if [ ${#dmg_candidates[@]} -ne 1 ]; then
-            echo "Expected exactly one generated DMG, found ${#dmg_candidates[@]}"
+            echo "FAIL: Expected exactly one generated DMG, found ${#dmg_candidates[@]}"
             printf '%s\n' "${dmg_candidates[@]}"
             exit 1
           fi
           dmg_path="${dmg_candidates[0]}"
+          pass "DMG found: $dmg_path"
+
           mount_output="$(hdiutil attach "$dmg_path" -nobrowse -readonly)"
           echo "$mount_output"
-          volume_path="$(printf '%s\n' "$mount_output" | awk 'END {print $NF}')"
-          trap 'hdiutil detach "$volume_path"' EXIT
-          test -d "$volume_path/Scribe.app"
-          test -L "$volume_path/Applications"
-          test -f "$volume_path/.background/dmg-background.png"
-          test -s "$volume_path/.DS_Store"
+          volume_path="$(printf '%s\n' "$mount_output" | awk '$NF ~ "^/Volumes/" { volume=$NF } END { print volume }')"
+          [ -n "$volume_path" ] || fail "DMG mount point was not found in hdiutil output"
+          [ -d "$volume_path" ] || fail "DMG mount point does not exist: $volume_path"
+          pass "DMG mounted: $volume_path"
+
+          [ -d "$volume_path/Scribe.app" ] || fail "Scribe.app not found at $volume_path/Scribe.app"
+          pass "Scribe.app found"
+
+          [ -L "$volume_path/Applications" ] || fail "Applications symlink not found at $volume_path/Applications"
+          applications_target="$(readlink "$volume_path/Applications")"
+          [ "$applications_target" = "/Applications" ] || fail "Applications symlink points to $applications_target instead of /Applications"
+          pass "Applications symlink found"
+
+          [ -f "$volume_path/.background/dmg-background.png" ] || fail "background not found at $volume_path/.background/dmg-background.png"
+          pass "background found"
+
+          [ -s "$volume_path/.DS_Store" ] || fail ".DS_Store not found or empty at $volume_path/.DS_Store"
+          pass ".DS_Store found"
+
           shasum -a 256 "$dmg_path"
+          if hdiutil detach "$volume_path"; then
+            volume_path=""
+            pass "DMG ejected"
+          else
+            fail "DMG eject failed"
+          fi
+          pass "macOS DMG structural verification complete"
 
       - name: Upload release bundle artifacts
         if: github.event_name == 'push' || inputs.publish_release == true
