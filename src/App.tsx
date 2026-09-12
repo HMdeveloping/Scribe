@@ -136,6 +136,15 @@ function logUpdaterError(context: "manual" | "startup" | "install", reason: unkn
 }
 
 const releaseNotes: Record<string, { itemKeys: TranslationKey[] }> = {
+  "0.1.10": {
+    itemKeys: [
+      "whatsNew0110RecordingStart",
+      "whatsNew0110FollowTranscript",
+      "whatsNew0110UpdaterLocalization",
+      "whatsNew0110TranscriptCharacters",
+      "whatsNew0110Icon",
+    ],
+  },
   "0.1.9": {
     itemKeys: [
       "whatsNew019RecordingStart",
@@ -1557,7 +1566,7 @@ function App() {
                         ? updateErrorCopy || t("updateCheckConfigurationCopy")
                         : updateStatus === "up-to-date"
                           ? t("secureUpdates")
-                        : updateDetails?.body || t("updateAvailableCopy")}
+                        : t("updateAvailableCopy")}
               </p>
             </div>
             <div className="dialog-actions confirm-dialog-actions">

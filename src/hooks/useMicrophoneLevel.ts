@@ -28,6 +28,7 @@ export function useMicrophoneLevel(paused: boolean) {
     let source: MediaStreamAudioSourceNode | undefined;
     let analyser: AnalyserNode | undefined;
     let frame = 0;
+    let analyserSetupFrame = 0;
     const smoothed = new Float32Array(BAR_COUNT);
     const displayed = new Float32Array(BAR_COUNT);
     const rawTargets = new Float32Array(BAR_COUNT);
@@ -37,6 +38,7 @@ export function useMicrophoneLevel(paused: boolean) {
 
     function stop() {
       disposed = true;
+      cancelAnimationFrame(analyserSetupFrame);
       cancelAnimationFrame(frame);
       stream?.getTracks().forEach((track) => {
         track.onended = null;
@@ -93,67 +95,77 @@ export function useMicrophoneLevel(paused: boolean) {
         stream.getAudioTracks().forEach((track) => {
           track.onended = () => fail("microphoneDisconnectedDetail");
         });
-        context = new AudioContext();
-        analyser = context.createAnalyser();
-        analyser.fftSize = 512;
-        source = context.createMediaStreamSource(stream);
-        source.connect(analyser);
-        // Do not connect to the speakers: analysis must not produce feedback.
-        await context.resume();
-        if (disposed) return;
-        console.info("[recording-lifecycle] audio_context_ready", {
-          state: context.state,
-          latencyMs: Math.round(performance.now() - acquiredAt),
-          performanceNowMs: Math.round(performance.now()),
-        });
         setStatus("active");
-        const samples = new Uint8Array(analyser.fftSize);
-        function update(time: number) {
-          if (disposed) return;
-          const delta = lastTime ? Math.min(time - lastTime, 100) : 16;
-          lastTime = time;
-          if (!pausedRef.current) {
-            // Fresh microphone targets at 30 Hz keep the shape stable; rAF still
-            // interpolates every visual frame for fluid motion.
-            if (time - lastAnalyserTime >= ANALYSER_INTERVAL_MS) {
-              lastAnalyserTime = time;
-              analyser!.getByteTimeDomainData(samples);
-              for (let index = 0; index < BAR_COUNT; index++) {
-                // Three samples from each distinct region retain the real wave's shape.
-                const center = Math.floor((index + 0.5) * samples.length / BAR_COUNT);
-                const amplitude = (Math.abs(samples[center - 1] - 128)
-                  + Math.abs(samples[center] - 128)
-                  + Math.abs(samples[center + 1] - 128)) / (3 * 128);
-                const gated = Math.max(0, amplitude - NOISE_GATE);
-                const gained = Math.min(1, gated * INPUT_GAIN);
-                rawTargets[index] = Math.pow(gained, COMPRESSION_EXPONENT) * VISUAL_HEADROOM;
+
+        analyserSetupFrame = requestAnimationFrame(() => {
+          if (disposed || !stream) return;
+          void (async () => {
+            const analyserRequestedAt = performance.now();
+            context = new AudioContext();
+            analyser = context.createAnalyser();
+            analyser.fftSize = 512;
+            source = context.createMediaStreamSource(stream!);
+            source.connect(analyser);
+            // Do not connect to the speakers: analysis must not produce feedback.
+            await context.resume();
+            if (disposed || !analyser) return;
+            console.info("[recording-lifecycle] audio_context_ready", {
+              state: context.state,
+              latencyMs: Math.round(performance.now() - analyserRequestedAt),
+              afterGetUserMediaMs: Math.round(performance.now() - acquiredAt),
+              performanceNowMs: Math.round(performance.now()),
+            });
+            const samples = new Uint8Array(analyser.fftSize);
+            function update(time: number) {
+              if (disposed || !analyser) return;
+              const delta = lastTime ? Math.min(time - lastTime, 100) : 16;
+              lastTime = time;
+              if (!pausedRef.current) {
+                // Fresh microphone targets at 30 Hz keep the shape stable; rAF still
+                // interpolates every visual frame for fluid motion.
+                if (time - lastAnalyserTime >= ANALYSER_INTERVAL_MS) {
+                  lastAnalyserTime = time;
+                  analyser.getByteTimeDomainData(samples);
+                  for (let index = 0; index < BAR_COUNT; index++) {
+                    // Three samples from each distinct region retain the real wave's shape.
+                    const center = Math.floor((index + 0.5) * samples.length / BAR_COUNT);
+                    const amplitude = (Math.abs(samples[center - 1] - 128)
+                      + Math.abs(samples[center] - 128)
+                      + Math.abs(samples[center + 1] - 128)) / (3 * 128);
+                    const gated = Math.max(0, amplitude - NOISE_GATE);
+                    const gained = Math.min(1, gated * INPUT_GAIN);
+                    rawTargets[index] = Math.pow(gained, COMPRESSION_EXPONENT) * VISUAL_HEADROOM;
+                  }
+                  // A light spatial blend removes isolated spikes without flattening the wave.
+                  for (let index = 0; index < BAR_COUNT; index++) {
+                    const left = rawTargets[Math.max(0, index - 1)];
+                    const right = rawTargets[Math.min(BAR_COUNT - 1, index + 1)];
+                    targets[index] = rawTargets[index] * (1 - NEIGHBOR_BLEND)
+                      + ((left + right) / 2) * NEIGHBOR_BLEND;
+                  }
+                }
+                let changed = false;
+                for (let index = 0; index < BAR_COUNT; index++) {
+                  const rate = targets[index] > smoothed[index] ? ATTACK : RELEASE;
+                  const smoothing = 1 - Math.pow(1 - rate, delta / (1000 / 60));
+                  smoothed[index] += (targets[index] - smoothed[index]) * smoothing;
+                  if (smoothed[index] < 0.0001) smoothed[index] = 0;
+                  if (Math.abs(smoothed[index] - displayed[index]) > 0.001
+                    || (smoothed[index] === 0 && displayed[index] !== 0)) changed = true;
+                }
+                // Skip sub-pixel updates and idle frames once silence has settled.
+                if (changed) {
+                  displayed.set(smoothed);
+                  setLevels(Array.from(smoothed));
+                }
               }
-              // A light spatial blend removes isolated spikes without flattening the wave.
-              for (let index = 0; index < BAR_COUNT; index++) {
-                const left = rawTargets[Math.max(0, index - 1)];
-                const right = rawTargets[Math.min(BAR_COUNT - 1, index + 1)];
-                targets[index] = rawTargets[index] * (1 - NEIGHBOR_BLEND)
-                  + ((left + right) / 2) * NEIGHBOR_BLEND;
-              }
+              frame = requestAnimationFrame(update);
             }
-            let changed = false;
-            for (let index = 0; index < BAR_COUNT; index++) {
-              const rate = targets[index] > smoothed[index] ? ATTACK : RELEASE;
-              const smoothing = 1 - Math.pow(1 - rate, delta / (1000 / 60));
-              smoothed[index] += (targets[index] - smoothed[index]) * smoothing;
-              if (smoothed[index] < 0.0001) smoothed[index] = 0;
-              if (Math.abs(smoothed[index] - displayed[index]) > 0.001
-                || (smoothed[index] === 0 && displayed[index] !== 0)) changed = true;
-            }
-            // Skip sub-pixel updates and idle frames once silence has settled.
-            if (changed) {
-              displayed.set(smoothed);
-              setLevels(Array.from(smoothed));
-            }
-          }
-          frame = requestAnimationFrame(update);
-        }
-        frame = requestAnimationFrame(update);
+            frame = requestAnimationFrame(update);
+          })().catch((reason) => {
+            console.warn("Scribe: microphone visualization initialization failed", reason);
+          });
+        });
       } catch (reason) {
         if (import.meta.env.DEV) console.error("Scribe: microphone initialization failed", reason);
         const name = reason instanceof DOMException ? reason.name : "";

@@ -1705,6 +1705,28 @@ fn is_punctuation_only(text: &str) -> bool {
         })
 }
 
+fn sanitize_transcript_text(text: &str) -> String {
+    let mut cleaned = String::with_capacity(text.len());
+    let mut last_was_space = false;
+
+    for character in text.chars() {
+        let replacement_or_control = character == '\u{fffd}'
+            || (character.is_control() && !matches!(character, '\n' | '\r' | '\t'));
+        if replacement_or_control || character.is_whitespace() {
+            if !last_was_space {
+                cleaned.push(' ');
+                last_was_space = true;
+            }
+            continue;
+        }
+
+        cleaned.push(character);
+        last_was_space = false;
+    }
+
+    cleaned.trim().to_string()
+}
+
 fn smooth_word_timings(mut words: Vec<TranscriptWord>) -> Vec<TranscriptWord> {
     const MIN_WORD_DURATION_SECONDS: f64 = 0.045;
     const MAX_LOCAL_EXTENSION_SECONDS: f64 = 0.12;
@@ -1776,11 +1798,12 @@ fn normalize_tokens_to_words(raw_tokens: &[Value]) -> Vec<TranscriptWord> {
             .or_else(|| token.get("content"))
             .and_then(Value::as_str)
             .unwrap_or("");
+        let token_text = sanitize_transcript_text(token_text);
         if token_text.is_empty() {
             continue;
         }
 
-        if is_whisper_special_token(token_text) {
+        if is_whisper_special_token(&token_text) {
             continue;
         }
 
@@ -1946,12 +1969,13 @@ fn parse_whisper_json_with_diagnostics(
     let mut segments = Vec::new();
 
     for segment in source_segments {
-        let text = segment
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let text = sanitize_transcript_text(
+            segment
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim(),
+        );
         if text.is_empty() {
             continue;
         }
@@ -2056,10 +2080,42 @@ mod tests {
         let (transcript, sanitization) =
             parse_fixture(&bytes).expect("recoverable invalid utf8 parses after sanitization");
 
-        assert_eq!(transcript.text, "dober � dan");
+        assert_eq!(transcript.text, "dober dan");
         let sanitization = sanitization.expect("invalid utf8 was summarized");
         assert_eq!(sanitization.invalid_sequence_count, 1);
         assert_eq!(sanitization.first_offsets, vec![invalid_offset]);
+    }
+
+    #[test]
+    fn transcript_text_sanitizer_removes_replacement_artifacts_only() {
+        let cases = [
+            ("č š ž", "č š ž"),
+            ("Hello, world!", "Hello, world!"),
+            ("To je 123.", "To je 123."),
+            ("l'été", "l'été"),
+            ("über", "über"),
+            ("fantje. � �e tako", "fantje. e tako"),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(sanitize_transcript_text(input), expected);
+            assert!(!sanitize_transcript_text(input).contains('\u{fffd}'));
+        }
+    }
+
+    #[test]
+    fn sanitizes_replacement_artifacts_in_segments_and_words() {
+        let (transcript, _) = parse_fixture(
+            r#"{"segments":[{"start":0.0,"end":2.0,"text":"fantje. � �e tako","words":[{"word":"fantje.","start":0.0,"end":0.5},{"word":"�","start":0.5,"end":0.6},{"word":"�e","start":0.6,"end":1.0},{"word":"tako","start":1.0,"end":1.5}]}]}"#.as_bytes(),
+        )
+        .expect("replacement artifact json parses");
+
+        assert_eq!(transcript.text, "fantje. e tako");
+        assert_eq!(transcript.segments[0].text, "fantje. e tako");
+        assert!(transcript.segments[0]
+            .words
+            .iter()
+            .all(|word| !word.text.contains('\u{fffd}')));
     }
 
     #[test]

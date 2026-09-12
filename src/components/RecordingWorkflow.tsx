@@ -613,11 +613,12 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
     scrollActiveLine("auto");
   }, [activeWordIndex, isFollowing, scrollActiveLine]);
 
-  const handleUserScroll = useCallback(() => {
+  const suspendFollowingForManualScroll = useCallback(() => {
     if (programmaticScrollRef.current) return;
+    if (!player.isPlaying) return;
     setIsFollowing(false);
     centerFollowActiveRef.current = false;
-  }, []);
+  }, [player.isPlaying]);
 
   const handleWordClick = useCallback((word: FlatWord) => {
     centerFollowActiveRef.current = true;
@@ -644,7 +645,9 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
       <div
         ref={containerRef}
         className="transcript-copy transcript-scroll-area"
-        onScroll={handleUserScroll}
+        onScroll={suspendFollowingForManualScroll}
+        onWheel={suspendFollowingForManualScroll}
+        onTouchMove={suspendFollowingForManualScroll}
       >
         {transcript.segments.map((segment, segmentIndex) => (
           <p
