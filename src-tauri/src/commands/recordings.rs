@@ -475,6 +475,32 @@ fn probe_import_duration_seconds(app: &AppHandle, audio_path: &Path) -> Result<u
     ffmpeg_duration_seconds(&ffmpeg, audio_path)
 }
 
+fn probe_audio_duration_with_ffprobe(ffprobe: &Path, audio_path: &Path) -> Result<f64, String> {
+    let output = Command::new(ffprobe)
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(audio_path)
+        .output()
+        .map_err(|error| format!("Unable to inspect audio duration: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ffprobe failed: {}",
+            summarize_process_output(&output.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .trim()
+        .parse::<f64>()
+        .map_err(|error| format!("Unable to parse audio duration: {error}"))
+}
+
 fn looks_like_media_timestamp(value: &str) -> bool {
     let trimmed = value.trim();
     trimmed.len() >= 10
@@ -1240,6 +1266,10 @@ fn summarize_process_output(bytes: &[u8]) -> String {
         .join("\n")
 }
 
+fn file_size(path: &Path) -> Option<u64> {
+    std::fs::metadata(path).ok().map(|metadata| metadata.len())
+}
+
 fn copy_with_progress(
     app: &AppHandle,
     import_id: &str,
@@ -1872,6 +1902,14 @@ fn import_audio_recording_blocking(
     if !is_supported_import_extension(&extension) {
         return Err("Unsupported audio file type".to_string());
     }
+    eprintln!(
+        "Scribe import: starting import_id={} source_path={} extension={} source_exists={} source_size={:?}",
+        import_id,
+        source.display(),
+        extension,
+        source.exists(),
+        file_size(&source)
+    );
 
     let imported_at = now_text();
     let source_created_at = imported_source_created_at(&app, &source, &imported_at);
@@ -1882,6 +1920,14 @@ fn import_audio_recording_blocking(
         .map_err(|error| format!("Unable to create recording directory: {error}"))?;
     let audio_path = recording_dir.join(&audio_file);
     copy_with_progress(&app, &import_id, &recording_id, &source, &audio_path)?;
+    eprintln!(
+        "Scribe import: copied import_id={} recording_id={} audio_path={} audio_exists={} audio_size={:?}",
+        import_id,
+        recording_id,
+        audio_path.display(),
+        audio_path.exists(),
+        file_size(&audio_path)
+    );
     let duration_seconds = match probe_import_duration_seconds(&app, &audio_path) {
         Ok(seconds) => seconds,
         Err(error) => {
@@ -1892,6 +1938,10 @@ fn import_audio_recording_blocking(
             0
         }
     };
+    eprintln!(
+        "Scribe import: duration probed import_id={} recording_id={} duration_seconds={}",
+        import_id, recording_id, duration_seconds
+    );
 
     let metadata = RecordingMetadata {
         version: 1,
@@ -2721,6 +2771,7 @@ fn transcribe_recording_blocking(
     }
 
     let ffmpeg = resolve_ffmpeg(&app)?;
+    let ffprobe = resolve_ffprobe(&app)?;
     let whisper_cli = resolve_whisper_cli(&app)?;
     let model_path = resolve_whisper_model(&app)?;
     let settings = load_or_create_settings(&app);
@@ -2761,8 +2812,47 @@ fn transcribe_recording_blocking(
     let whisper_output_prefix = recording_dir.join("whisper-output");
     let whisper_output_json = recording_dir.join("whisper-output.json");
     let transcript_path = recording_dir.join("transcript.json");
+    let is_imported = metadata.imported_at.is_some();
+    let source_extension = audio_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("");
 
-    eprintln!("[transcription] model: {}", model_path.display());
+    for stale_path in [&processing_wav, &whisper_output_json] {
+        if stale_path.exists() {
+            if let Err(error) = std::fs::remove_file(stale_path) {
+                eprintln!(
+                    "Scribe transcription: unable to remove stale file recording_id={} path={} error={}",
+                    recording_id,
+                    stale_path.display(),
+                    error
+                );
+            }
+        }
+    }
+
+    eprintln!(
+        "Scribe transcription: starting recording_id={} source={} source_extension={} source_path={} source_exists={} source_size={:?} ffmpeg_path={} ffmpeg_exists={} ffmpeg_executable={} ffprobe_path={} whisper_path={} whisper_exists={} whisper_executable={} model_id={} model_path={} model_exists={} model_size={:?} language={} metadata_duration_seconds={}",
+        recording_id,
+        if is_imported { "imported" } else { "microphone" },
+        source_extension,
+        audio_path.display(),
+        audio_path.exists(),
+        file_size(&audio_path),
+        ffmpeg.display(),
+        ffmpeg.exists(),
+        is_executable(&ffmpeg),
+        ffprobe.display(),
+        whisper_cli.display(),
+        whisper_cli.exists(),
+        is_executable(&whisper_cli),
+        settings.whisper_model,
+        model_path.display(),
+        model_path.exists(),
+        file_size(&model_path),
+        transcription_language,
+        metadata.duration_seconds
+    );
     emit_transcription_progress(
         &app,
         &recording_id,
@@ -2774,10 +2864,15 @@ fn transcribe_recording_blocking(
         "-y".to_string(),
         "-i".to_string(),
         audio_path.to_string_lossy().to_string(),
+        "-map".to_string(),
+        "0:a:0".to_string(),
+        "-vn".to_string(),
         "-ac".to_string(),
         "1".to_string(),
         "-ar".to_string(),
         "16000".to_string(),
+        "-c:a".to_string(),
+        "pcm_s16le".to_string(),
         "-sample_fmt".to_string(),
         "s16".to_string(),
         processing_wav.to_string_lossy().to_string(),
@@ -2812,6 +2907,30 @@ fn transcribe_recording_blocking(
             "FFmpeg could not convert this recording.".to_string(),
         ));
     }
+    let processing_wav_duration = match probe_audio_duration_with_ffprobe(&ffprobe, &processing_wav)
+    {
+        Ok(duration) => Some(duration),
+        Err(error) => {
+            eprintln!(
+                    "Scribe transcription: unable to probe processing WAV recording_id={} path={} error={}",
+                    recording_id,
+                    processing_wav.display(),
+                    error
+                );
+            None
+        }
+    };
+    eprintln!(
+        "Scribe transcription: FFmpeg succeeded recording_id={} exit={:?} processing_wav={} exists={} size={:?} duration_seconds={:?} stdout={} stderr={}",
+        recording_id,
+        conversion_output.status.code(),
+        processing_wav.display(),
+        processing_wav.exists(),
+        file_size(&processing_wav),
+        processing_wav_duration,
+        summarize_process_output(&conversion_output.stdout),
+        summarize_process_output(&conversion_output.stderr)
+    );
 
     emit_transcription_progress(
         &app,
@@ -2851,9 +2970,13 @@ fn transcribe_recording_blocking(
 
     if !whisper_output.status.success() {
         eprintln!(
-            "Scribe transcription: whisper first attempt failed recording_id={} exit={:?} stdout={} stderr={}",
+            "Scribe transcription: whisper first attempt failed recording_id={} source={} exit={:?} output_json={} output_json_exists={} output_json_size={:?} stdout={} stderr={}",
             recording_id,
+            if is_imported { "imported" } else { "microphone" },
             whisper_output.status.code(),
+            whisper_output_json.display(),
+            whisper_output_json.exists(),
+            file_size(&whisper_output_json),
             summarize_process_output(&whisper_output.stdout),
             summarize_process_output(&whisper_output.stderr)
         );
@@ -2875,9 +2998,13 @@ fn transcribe_recording_blocking(
 
     if !whisper_output.status.success() {
         eprintln!(
-            "Scribe transcription: whisper failed recording_id={} exit={:?} stdout={} stderr={}",
+            "Scribe transcription: whisper failed recording_id={} source={} exit={:?} output_json={} output_json_exists={} output_json_size={:?} stdout={} stderr={}",
             recording_id,
+            if is_imported { "imported" } else { "microphone" },
             whisper_output.status.code(),
+            whisper_output_json.display(),
+            whisper_output_json.exists(),
+            file_size(&whisper_output_json),
             summarize_process_output(&whisper_output.stdout),
             summarize_process_output(&whisper_output.stderr)
         );
@@ -2885,6 +3012,17 @@ fn transcribe_recording_blocking(
             "whisper.cpp could not transcribe this recording.".to_string(),
         ));
     }
+    eprintln!(
+        "Scribe transcription: whisper succeeded recording_id={} source={} exit={:?} output_json={} output_json_exists={} output_json_size={:?} stdout={} stderr={}",
+        recording_id,
+        if is_imported { "imported" } else { "microphone" },
+        whisper_output.status.code(),
+        whisper_output_json.display(),
+        whisper_output_json.exists(),
+        file_size(&whisper_output_json),
+        summarize_process_output(&whisper_output.stdout),
+        summarize_process_output(&whisper_output.stderr)
+    );
 
     emit_transcription_progress(
         &app,
@@ -2893,14 +3031,54 @@ fn transcribe_recording_blocking(
         Some(metadata.duration_seconds),
     );
 
-    let transcript = parse_whisper_json(&whisper_output_json, &transcription_language)?;
+    let transcript = match parse_whisper_json(&whisper_output_json, &transcription_language) {
+        Ok(transcript) => {
+            eprintln!(
+                "Scribe transcription: whisper JSON parsed recording_id={} output_json={} output_json_size={:?} segments={} text_chars={}",
+                recording_id,
+                whisper_output_json.display(),
+                file_size(&whisper_output_json),
+                transcript.segments.len(),
+                transcript.text.chars().count()
+            );
+            transcript
+        }
+        Err(error) => {
+            eprintln!(
+                "Scribe transcription: whisper JSON parse failed recording_id={} output_json={} output_json_exists={} output_json_size={:?} error={:?}",
+                recording_id,
+                whisper_output_json.display(),
+                whisper_output_json.exists(),
+                file_size(&whisper_output_json),
+                error
+            );
+            return Err(error);
+        }
+    };
     let transcript_json = serde_json::to_vec_pretty(&transcript).map_err(|error| {
+        eprintln!(
+            "Scribe transcription: transcript serialization failed recording_id={} error={}",
+            recording_id, error
+        );
         TranscriptionError::Io(format!("Unable to serialize transcript: {error}"))
     })?;
-    std::fs::write(&transcript_path, transcript_json)
-        .map_err(|error| TranscriptionError::Io(format!("Unable to write transcript: {error}")))?;
+    std::fs::write(&transcript_path, transcript_json).map_err(|error| {
+        eprintln!(
+            "Scribe transcription: transcript write failed recording_id={} transcript_path={} error={}",
+            recording_id,
+            transcript_path.display(),
+            error
+        );
+        TranscriptionError::Io(format!("Unable to write transcript: {error}"))
+    })?;
 
-    let conn = open_database(&app).map_err(TranscriptionError::Io)?;
+    let conn = open_database(&app).map_err(|error| {
+        eprintln!(
+            "Scribe transcription: database open failed after transcript write recording_id={} error={}",
+            recording_id, error
+        );
+        TranscriptionError::Io(error)
+    })?;
     let project_id: Option<String> = conn
         .query_row(
             "SELECT project_id FROM recordings WHERE id = ?1",
@@ -2909,6 +3087,10 @@ fn transcribe_recording_blocking(
         )
         .optional()
         .map_err(|error| {
+            eprintln!(
+                "Scribe transcription: unable to read recording index recording_id={} error={}",
+                recording_id, error
+            );
             TranscriptionError::Io(format!("Unable to read recording index: {error}"))
         })?
         .flatten();
@@ -2920,7 +3102,20 @@ fn transcribe_recording_blocking(
         Some("transcript.json"),
         "ready",
     )
-    .map_err(TranscriptionError::Io)?;
+    .map_err(|error| {
+        eprintln!(
+            "Scribe transcription: unable to update recording index recording_id={} error={}",
+            recording_id, error
+        );
+        TranscriptionError::Io(error)
+    })?;
+    eprintln!(
+        "Scribe transcription: transcript persisted recording_id={} transcript_path={} transcript_exists={} transcript_size={:?}",
+        recording_id,
+        transcript_path.display(),
+        transcript_path.exists(),
+        file_size(&transcript_path)
+    );
 
     if let Err(error) = std::fs::remove_file(&processing_wav) {
         eprintln!("Scribe transcription: unable to remove processing WAV: {error}");
