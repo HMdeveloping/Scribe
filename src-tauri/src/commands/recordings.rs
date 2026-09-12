@@ -1798,12 +1798,11 @@ fn normalize_tokens_to_words(raw_tokens: &[Value]) -> Vec<TranscriptWord> {
             .or_else(|| token.get("content"))
             .and_then(Value::as_str)
             .unwrap_or("");
-        let token_text = sanitize_transcript_text(token_text);
         if token_text.is_empty() {
             continue;
         }
 
-        if is_whisper_special_token(&token_text) {
+        if is_whisper_special_token(token_text) {
             continue;
         }
 
@@ -1816,18 +1815,19 @@ fn normalize_tokens_to_words(raw_tokens: &[Value]) -> Vec<TranscriptWord> {
             || token_text.starts_with('Ġ')
             || is_opening_punctuation(token_text.trim());
 
-        let cleaned = token_text
+        let cleaned = sanitize_transcript_text(token_text)
             .trim_start_matches(' ')
             .trim_start_matches('\t')
-            .trim_start_matches('Ġ');
+            .trim_start_matches('Ġ')
+            .to_string();
 
         if cleaned.is_empty() {
             continue;
         }
 
-        if is_punctuation_only(cleaned) {
+        if is_punctuation_only(&cleaned) {
             if let Some(ref mut builder) = current {
-                builder.text.push_str(cleaned);
+                builder.text.push_str(&cleaned);
                 if has_timing {
                     if !builder.has_timing || token_start < builder.start {
                         builder.start = token_start;
@@ -1846,13 +1846,13 @@ fn normalize_tokens_to_words(raw_tokens: &[Value]) -> Vec<TranscriptWord> {
                 builders.push(finished);
             }
             current = Some(Builder {
-                text: cleaned.to_string(),
+                text: cleaned,
                 start: token_start,
                 end: token_end,
                 has_timing,
             });
         } else if let Some(ref mut builder) = current {
-            builder.text.push_str(cleaned);
+            builder.text.push_str(&cleaned);
             if has_timing {
                 if !builder.has_timing || token_start < builder.start {
                     builder.start = token_start;
@@ -1864,7 +1864,7 @@ fn normalize_tokens_to_words(raw_tokens: &[Value]) -> Vec<TranscriptWord> {
             }
         } else {
             current = Some(Builder {
-                text: cleaned.to_string(),
+                text: cleaned,
                 start: token_start,
                 end: token_end,
                 has_timing,
@@ -2089,12 +2089,15 @@ mod tests {
     #[test]
     fn transcript_text_sanitizer_removes_replacement_artifacts_only() {
         let cases = [
+            ("To je normalen stavek.", "To je normalen stavek."),
+            ("Pozdravljeni, kako ste?", "Pozdravljeni, kako ste?"),
             ("č š ž", "č š ž"),
             ("Hello, world!", "Hello, world!"),
             ("To je 123.", "To je 123."),
             ("l'été", "l'été"),
-            ("über", "über"),
+            ("über alles", "über alles"),
             ("fantje. � �e tako", "fantje. e tako"),
+            ("ena dva tri štiri pet", "ena dva tri štiri pet"),
         ];
 
         for (input, expected) in cases {
@@ -2116,6 +2119,22 @@ mod tests {
             .words
             .iter()
             .all(|word| !word.text.contains('\u{fffd}')));
+    }
+
+    #[test]
+    fn preserves_whisper_token_leading_space_word_boundaries() {
+        let (transcript, _) = parse_fixture(
+            r#"{"segments":[{"start":0.0,"end":3.0,"text":"To je normalen slovenski prepis.","tokens":[{"text":"To","start":0.0,"end":0.2},{"text":" je","start":0.2,"end":0.4},{"text":" normalen","start":0.4,"end":0.9},{"text":" slovenski","start":0.9,"end":1.5},{"text":" prepis","start":1.5,"end":2.0},{"text":".","start":2.0,"end":2.1}]}]}"#.as_bytes(),
+        )
+        .expect("tokenized whisper json parses");
+
+        assert_eq!(transcript.text, "To je normalen slovenski prepis.");
+        let words: Vec<&str> = transcript.segments[0]
+            .words
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect();
+        assert_eq!(words, vec!["To", "je", "normalen", "slovenski", "prepis."]);
     }
 
     #[test]

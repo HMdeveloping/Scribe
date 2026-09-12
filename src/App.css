@@ -2663,7 +2663,7 @@ button {
 .transcript-scroll-area {
   flex: 1;
   overflow-y: auto;
-  padding: 32px 0 64px;
+  padding: 32px 0 32px;
   max-height: calc(100vh - 320px);
 }
 
@@ -2716,9 +2716,16 @@ button {
   line-height: 1.8;
 }
 
+.follow-transcript-slot {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .follow-transcript-btn {
   align-self: center;
-  margin: 12px auto;
+  margin: 10px auto 14px;
   padding: 8px 16px;
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -2736,9 +2743,14 @@ button {
   box-shadow: 0 4px 12px rgba(73, 103, 242, 0.12);
 }
 
-.audio-player {
+.audio-player-shell {
   position: sticky;
   bottom: 0;
+  z-index: 5;
+  padding: 0 0 28px;
+}
+
+.audio-player {
   display: flex;
   align-items: center;
   gap: 14px;

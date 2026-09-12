@@ -450,6 +450,8 @@ type FlatWord = {
   end: number;
 };
 
+type FollowMode = "following" | "suspendedByUser";
+
 function buildFlatWordIndex(segments: TranscriptSegment[]): FlatWord[] {
   const flat: FlatWord[] = [];
   segments.forEach((segment, segmentIndex) => {
@@ -507,7 +509,7 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
   const animationFrameRef = useRef<number | null>(null);
   const programmaticScrollRef = useRef(false);
   const programmaticScrollTimeoutRef = useRef<number | null>(null);
-  const [isFollowing, setIsFollowing] = useState(true);
+  const [followMode, setFollowMode] = useState<FollowMode>("following");
   const activeWordRef = useRef<HTMLSpanElement | null>(null);
   const activeLineRef = useRef<HTMLParagraphElement | null>(null);
   const centerFollowActiveRef = useRef(false);
@@ -609,20 +611,20 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
   }, [markProgrammaticScroll]);
 
   useEffect(() => {
-    if (!isFollowing || activeWordIndex < 0) return;
+    if (followMode !== "following" || activeWordIndex < 0) return;
     scrollActiveLine("auto");
-  }, [activeWordIndex, isFollowing, scrollActiveLine]);
+  }, [activeWordIndex, followMode, scrollActiveLine]);
 
   const suspendFollowingForManualScroll = useCallback(() => {
     if (programmaticScrollRef.current) return;
     if (!player.isPlaying) return;
-    setIsFollowing(false);
+    setFollowMode("suspendedByUser");
     centerFollowActiveRef.current = false;
   }, [player.isPlaying]);
 
   const handleWordClick = useCallback((word: FlatWord) => {
     centerFollowActiveRef.current = true;
-    setIsFollowing(true);
+    setFollowMode("following");
     player.seekTo(word.start);
     updateActiveWord(word.start);
     window.setTimeout(() => scrollActiveLine("smooth", true), 0);
@@ -630,7 +632,7 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
 
   const resumeFollowing = useCallback(() => {
     centerFollowActiveRef.current = true;
-    setIsFollowing(true);
+    setFollowMode("following");
     updateActiveWord(player.readCurrentTime());
     window.setTimeout(() => scrollActiveLine("smooth", true), 0);
   }, [player.readCurrentTime, scrollActiveLine, updateActiveWord]);
@@ -684,11 +686,13 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
           </p>
         ))}
       </div>
-      {hasTimedWords && !isFollowing && (
-        <button className="follow-transcript-btn" onClick={resumeFollowing}>
-          {t("followTranscript")}
-        </button>
-      )}
+      <div className="follow-transcript-slot">
+        {hasTimedWords && followMode === "suspendedByUser" ? (
+          <button className="follow-transcript-btn" onClick={resumeFollowing}>
+            {t("followTranscript")}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -876,7 +880,9 @@ export function TranscriptView({
       ) : (
         <p className="transcript-placeholder">{t("tabPlaceholder")}</p>
       )}
-      <AudioPlayer player={player} t={t} />
+      <div className="audio-player-shell">
+        <AudioPlayer player={player} t={t} />
+      </div>
     </section>
   );
 }
