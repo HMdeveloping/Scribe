@@ -130,13 +130,20 @@ jobs:
           git clone --depth 1 --branch "$WHISPER_CPP_REF" https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
           cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8-a -DCMAKE_INSTALL_RPATH=@executable_path
           cmake --build /tmp/whisper.cpp/build --config Release --target whisper-cli
+          echo "Discovered whisper.cpp macOS dylibs:"
+          find /tmp/whisper.cpp/build -name '*.dylib' -print | sort
+          echo "Discovered whisper.cpp whisper-cli binaries:"
+          find /tmp/whisper.cpp/build -name whisper-cli -print | sort
           FFMPEG_PATH="/tmp/scribe-ffmpeg/bin/ffmpeg" \
           FFPROBE_PATH="/tmp/scribe-ffmpeg/bin/ffprobe" \
           WHISPER_CLI_PATH="/tmp/whisper.cpp/build/bin/whisper-cli" \
+          WHISPER_BUILD_DIR="/tmp/whisper.cpp/build" \
           node scripts/stage-runtime-binaries.mjs "${{ matrix.target }}"
           test -x "$runtime_dir/ffmpeg"
           test -x "$runtime_dir/ffprobe"
           test -x "$runtime_dir/whisper-cli"
+          test -n "$(find "$runtime_dir" -maxdepth 1 -name 'libwhisper*.dylib' -print -quit)"
+          test -n "$(find "$runtime_dir" -maxdepth 1 -name 'libggml*.dylib' -print -quit)"
           file "$runtime_dir/ffmpeg" "$runtime_dir/ffprobe" "$runtime_dir/whisper-cli"
           "$runtime_dir/ffmpeg" -version
           "$runtime_dir/ffmpeg" -L
@@ -218,6 +225,8 @@ jobs:
           test -x "$bundled_dir/ffmpeg"
           test -x "$bundled_dir/ffprobe"
           test -x "$bundled_dir/whisper-cli"
+          test -n "$(find "$bundled_dir" -maxdepth 1 -name 'libwhisper*.dylib' -print -quit)"
+          test -n "$(find "$bundled_dir" -maxdepth 1 -name 'libggml*.dylib' -print -quit)"
           find "$app_path" -type f | grep -E 'ffmpeg|ffprobe|whisper'
           ls -l "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
           file "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
@@ -255,6 +264,8 @@ jobs:
           test -x "$bundled_dir/ffmpeg"
           test -x "$bundled_dir/ffprobe"
           test -x "$bundled_dir/whisper-cli"
+          test -n "$(find "$bundled_dir" -maxdepth 1 -name 'libwhisper*.dylib' -print -quit)"
+          test -n "$(find "$bundled_dir" -maxdepth 1 -name 'libggml*.dylib' -print -quit)"
           find "$app_path" -type f | grep -E 'ffmpeg|ffprobe|whisper'
           ls -l "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
           file "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
@@ -298,6 +309,8 @@ jobs:
           test -x "$bundled_dir/ffmpeg"
           test -x "$bundled_dir/ffprobe"
           test -x "$bundled_dir/whisper-cli"
+          test -n "$(find "$bundled_dir" -maxdepth 1 -name 'libwhisper*.dylib' -print -quit)"
+          test -n "$(find "$bundled_dir" -maxdepth 1 -name 'libggml*.dylib' -print -quit)"
           find "$app_path" -type f | grep -E 'ffmpeg|ffprobe|whisper'
           ls -l "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
           file "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
