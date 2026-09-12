@@ -57,6 +57,84 @@ type ClassifiedTranscriptionError = {
   message?: string;
 };
 
+type UpdaterErrorKind = "network" | "server" | "configuration" | "unknown";
+
+type ClassifiedUpdaterError = {
+  kind: UpdaterErrorKind;
+  titleKey: TranslationKey;
+  copyKey: TranslationKey;
+  message: string;
+  name?: string;
+};
+
+function updaterErrorMessage(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  if (typeof reason === "string") return reason;
+  try {
+    return JSON.stringify(reason);
+  } catch {
+    return String(reason);
+  }
+}
+
+function classifyUpdaterError(reason: unknown): ClassifiedUpdaterError {
+  const message = updaterErrorMessage(reason);
+  const lowerMessage = message.toLowerCase();
+  const name = reason instanceof Error ? reason.name : undefined;
+
+  if (/(network|dns|resolve|connection|connect|offline|timed?\s*out|timeout|could not fetch|failed to fetch|request error)/i.test(message)) {
+    return {
+      kind: "network",
+      titleKey: "couldntCheckForUpdates",
+      copyKey: "updateCheckNetworkCopy",
+      message,
+      name,
+    };
+  }
+
+  if (
+    /(signature|sign|pubkey|public key|invalid|parse|json|platform|target|darwin|windows|not contained|not found in|config)/i.test(message) ||
+    lowerMessage.includes("no updater")
+  ) {
+    return {
+      kind: "configuration",
+      titleKey: "updateCheckConfigurationTitle",
+      copyKey: "updateCheckConfigurationCopy",
+      message,
+      name,
+    };
+  }
+
+  if (/(http|status|404|403|500|502|503|endpoint|server|unavailable|not found|latest\.json)/i.test(message)) {
+    return {
+      kind: "server",
+      titleKey: "updateCheckServerTitle",
+      copyKey: "updateCheckServerCopy",
+      message,
+      name,
+    };
+  }
+
+  return {
+    kind: "unknown",
+    titleKey: "updateCheckConfigurationTitle",
+    copyKey: "updateCheckConfigurationCopy",
+    message,
+    name,
+  };
+}
+
+function logUpdaterError(context: "manual" | "startup" | "install", reason: unknown) {
+  const classified = classifyUpdaterError(reason);
+  console.error("Scribe updater operation failed", {
+    context,
+    kind: classified.kind,
+    name: classified.name,
+    message: classified.message,
+  });
+  return classified;
+}
+
 const releaseNotes: Record<string, { itemKeys: TranslationKey[] }> = {
   "0.1.4": {
     itemKeys: [
@@ -189,6 +267,7 @@ function App() {
   const [updateDetails, setUpdateDetails] = useState<UpdateDetails | null>(null);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [updateError, setUpdateError] = useState("");
+  const [updateErrorCopy, setUpdateErrorCopy] = useState("");
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [settingsData, setSettingsData] = useState<SettingsViewData | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -314,6 +393,7 @@ function App() {
   const checkForUpdates = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (import.meta.env.DEV && silent) return;
     setUpdateError("");
+    setUpdateErrorCopy("");
     setUpdateProgress(null);
     setUpdateStatus("checking");
     try {
@@ -336,10 +416,16 @@ function App() {
         setUpdateDialogOpen(true);
       }
     } catch (reason) {
-      console.error("Scribe: unable to check for updates", reason);
+      const classified = logUpdaterError(silent ? "startup" : "manual", reason);
+      if (silent) {
+        setUpdateStatus("idle");
+        setUpdateError("");
+        setUpdateErrorCopy("");
+        return;
+      }
       setUpdateStatus("error");
-      setUpdateError(t("couldntCheckForUpdates"));
-      if (silent) return;
+      setUpdateError(t(classified.titleKey));
+      setUpdateErrorCopy(t(classified.copyKey));
       setUpdateDialogOpen(true);
     }
   }, [t]);
@@ -349,6 +435,7 @@ function App() {
     if (!availableUpdate) return;
     let downloadedBytes = 0;
     setUpdateError("");
+    setUpdateErrorCopy("");
     setUpdateProgress({ downloadedBytes: 0 });
     setUpdateStatus("downloading");
     try {
@@ -376,9 +463,10 @@ function App() {
       });
       setUpdateStatus("ready");
     } catch (reason) {
-      console.error("Scribe: unable to install update", reason);
+      logUpdaterError("install", reason);
       setUpdateStatus("error");
       setUpdateError(t("couldntInstallUpdate"));
+      setUpdateErrorCopy(t("updateCheckConfigurationCopy"));
     }
   }, [t]);
 
@@ -1429,7 +1517,7 @@ function App() {
                     : updateStatus === "ready"
                       ? t("updateReadyCopy")
                       : updateStatus === "error"
-                        ? updateError === t("couldntCheckForUpdates") ? t("updateCheckFailedCopy") : updateError
+                        ? updateErrorCopy || t("updateCheckConfigurationCopy")
                         : updateStatus === "up-to-date"
                           ? t("secureUpdates")
                         : updateDetails?.body || t("updateAvailableCopy")}

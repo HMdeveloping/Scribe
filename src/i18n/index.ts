@@ -216,6 +216,11 @@ const en = {
   restartAndUpdate: "Restart and update",
   couldntCheckForUpdates: "Couldn't check for updates",
   updateCheckFailedCopy: "Check your internet connection and try again.",
+  updateCheckNetworkCopy: "Check your internet connection and try again.",
+  updateCheckServerTitle: "Updates can't be checked right now",
+  updateCheckServerCopy: "Try again in a few moments.",
+  updateCheckConfigurationTitle: "There was a problem checking for updates",
+  updateCheckConfigurationCopy: "Try again later.",
   couldntInstallUpdate: "Couldn't install the update.",
   whatsNewTitle: "What's new in Scribe",
   whatsNewGotIt: "Got it",
@@ -343,6 +348,73 @@ const whatsNewTranslations: Record<AppLanguage, Partial<Dictionary>> = {
   pl: { whatsNewTitle: "Co nowego w Scribe", whatsNewGotIt: "Rozumiem", whatsNew014ReliableRecording: "Bardziej niezawodne nagrywanie i transkrypcja", whatsNew014LongImports: "Import dłuższych nagrań audio działa teraz prawidłowo", whatsNew014ImmediateVisibility: "Nagrania pojawiają się od razu po zapisaniu", whatsNew014Localization: "Ulepszone języki i tłumaczenia", whatsNew014LayoutFixes: "Poprawiony panel boczny i inne drobne błędy" },
 };
 
+const updaterErrorTranslations: Record<AppLanguage, Partial<Dictionary>> = {
+  en: {},
+  sl: {
+    updateCheckNetworkCopy: "Preverite internetno povezavo in poskusite znova.",
+    updateCheckServerTitle: "Posodobitev trenutno ni mogoče preveriti.",
+    updateCheckServerCopy: "Poskusite znova čez nekaj trenutkov.",
+    updateCheckConfigurationTitle: "Pri preverjanju posodobitev je prišlo do napake.",
+    updateCheckConfigurationCopy: "Poskusite znova pozneje.",
+  },
+  de: {
+    updateCheckNetworkCopy: "Prüfen Sie Ihre Internetverbindung und versuchen Sie es erneut.",
+    updateCheckServerTitle: "Updates können momentan nicht geprüft werden.",
+    updateCheckServerCopy: "Versuchen Sie es in ein paar Augenblicken erneut.",
+    updateCheckConfigurationTitle: "Beim Suchen nach Updates ist ein Fehler aufgetreten.",
+    updateCheckConfigurationCopy: "Versuchen Sie es später erneut.",
+  },
+  es: {
+    updateCheckNetworkCopy: "Comprueba tu conexión a internet e inténtalo de nuevo.",
+    updateCheckServerTitle: "No se pueden comprobar las actualizaciones ahora.",
+    updateCheckServerCopy: "Inténtalo de nuevo en unos momentos.",
+    updateCheckConfigurationTitle: "Se produjo un error al buscar actualizaciones.",
+    updateCheckConfigurationCopy: "Inténtalo de nuevo más tarde.",
+  },
+  it: {
+    updateCheckNetworkCopy: "Controlla la connessione a internet e riprova.",
+    updateCheckServerTitle: "Al momento non è possibile verificare gli aggiornamenti.",
+    updateCheckServerCopy: "Riprova tra qualche istante.",
+    updateCheckConfigurationTitle: "Si è verificato un errore durante la verifica degli aggiornamenti.",
+    updateCheckConfigurationCopy: "Riprova più tardi.",
+  },
+  hr: {
+    updateCheckNetworkCopy: "Provjerite internetsku vezu i pokušajte ponovno.",
+    updateCheckServerTitle: "Ažuriranja se trenutačno ne mogu provjeriti.",
+    updateCheckServerCopy: "Pokušajte ponovno za nekoliko trenutaka.",
+    updateCheckConfigurationTitle: "Došlo je do pogreške pri provjeri ažuriranja.",
+    updateCheckConfigurationCopy: "Pokušajte ponovno poslije.",
+  },
+  fr: {
+    updateCheckNetworkCopy: "Vérifiez votre connexion internet et réessayez.",
+    updateCheckServerTitle: "Impossible de vérifier les mises à jour pour le moment.",
+    updateCheckServerCopy: "Réessayez dans quelques instants.",
+    updateCheckConfigurationTitle: "Un problème est survenu lors de la recherche de mises à jour.",
+    updateCheckConfigurationCopy: "Réessayez plus tard.",
+  },
+  pt: {
+    updateCheckNetworkCopy: "Verifique a sua ligação à internet e tente novamente.",
+    updateCheckServerTitle: "Não é possível procurar atualizações neste momento.",
+    updateCheckServerCopy: "Tente novamente dentro de alguns instantes.",
+    updateCheckConfigurationTitle: "Ocorreu um problema ao procurar atualizações.",
+    updateCheckConfigurationCopy: "Tente novamente mais tarde.",
+  },
+  nl: {
+    updateCheckNetworkCopy: "Controleer uw internetverbinding en probeer het opnieuw.",
+    updateCheckServerTitle: "Updates kunnen nu niet worden gecontroleerd.",
+    updateCheckServerCopy: "Probeer het over enkele ogenblikken opnieuw.",
+    updateCheckConfigurationTitle: "Er is een probleem opgetreden bij het controleren op updates.",
+    updateCheckConfigurationCopy: "Probeer het later opnieuw.",
+  },
+  pl: {
+    updateCheckNetworkCopy: "Sprawdź połączenie z internetem i spróbuj ponownie.",
+    updateCheckServerTitle: "Nie można teraz sprawdzić aktualizacji.",
+    updateCheckServerCopy: "Spróbuj ponownie za kilka chwil.",
+    updateCheckConfigurationTitle: "Wystąpił problem podczas sprawdzania aktualizacji.",
+    updateCheckConfigurationCopy: "Spróbuj ponownie później.",
+  },
+};
+
 const slovenianCompletionTranslations: Partial<Dictionary> = {
   archive: "Arhiviraj",
   archiveFailed: "Posnetka ni bilo mogoče arhivirati.",
@@ -419,6 +491,7 @@ const slovenianCompletionTranslations: Partial<Dictionary> = {
 
 for (const language of languages) {
   Object.assign(dictionaries[language.code], whatsNewTranslations[language.code]);
+  Object.assign(dictionaries[language.code], updaterErrorTranslations[language.code]);
   if (language.code !== "en") Object.assign(dictionaries[language.code], v01ProgressTranslations[language.code], onboardingTranslations[language.code], modelRecoveryTranslations[language.code], reliabilityTranslations[language.code]);
 }
 
