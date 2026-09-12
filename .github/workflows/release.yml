@@ -255,6 +255,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- ${{ matrix.args }}
 
+      - name: Build deterministic macOS release DMG
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        run: node scripts/build-release-dmg.mjs
+
       - name: Build Windows release bundle
         if: matrix.target == 'x86_64-pc-windows-msvc' && (github.event_name == 'push' || inputs.publish_release == true)
         shell: pwsh
@@ -367,6 +372,8 @@ jobs:
 
           [ -s "$volume_path/.DS_Store" ] || fail ".DS_Store not found or empty at $volume_path/.DS_Store"
           pass ".DS_Store found"
+          strings "$volume_path/.DS_Store" | grep -F '/.background/dmg-background.png' >/dev/null || fail ".DS_Store does not reference /.background/dmg-background.png"
+          pass ".DS_Store references background"
 
           shasum -a 256 "$dmg_path"
           if hdiutil detach "$volume_path"; then
