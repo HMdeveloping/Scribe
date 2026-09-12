@@ -1874,14 +1874,63 @@ fn normalize_tokens_to_words(raw_tokens: &[Value]) -> Vec<TranscriptWord> {
     smooth_word_timings(words)
 }
 
-fn parse_whisper_json(path: &Path, language: &str) -> Result<TranscriptData, TranscriptionError> {
-    let raw = std::fs::read_to_string(path).map_err(|error| {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Utf8SanitizationSummary {
+    invalid_sequence_count: usize,
+    first_offsets: Vec<usize>,
+}
+
+fn summarize_invalid_utf8(bytes: &[u8]) -> Utf8SanitizationSummary {
+    let mut invalid_sequence_count = 0;
+    let mut first_offsets = Vec::new();
+    let mut remaining = bytes;
+    let mut offset = 0;
+
+    while let Err(error) = std::str::from_utf8(remaining) {
+        let invalid_offset = offset + error.valid_up_to();
+        invalid_sequence_count += 1;
+        if first_offsets.len() < 12 {
+            first_offsets.push(invalid_offset);
+        }
+
+        let advance = error
+            .error_len()
+            .map(|length| error.valid_up_to() + length)
+            .unwrap_or_else(|| remaining.len());
+        if advance == 0 || advance >= remaining.len() {
+            break;
+        }
+        offset += advance;
+        remaining = &remaining[advance..];
+    }
+
+    Utf8SanitizationSummary {
+        invalid_sequence_count,
+        first_offsets,
+    }
+}
+
+fn parse_whisper_json_with_diagnostics(
+    path: &Path,
+    language: &str,
+) -> Result<(TranscriptData, Option<Utf8SanitizationSummary>), TranscriptionError> {
+    let raw_bytes = std::fs::read(path).map_err(|error| {
         TranscriptionError::TranscriptUnavailable(format!("Unable to read whisper output: {error}"))
     })?;
+    let (raw, sanitization) = match std::str::from_utf8(&raw_bytes) {
+        Ok(raw) => (std::borrow::Cow::Borrowed(raw), None),
+        Err(_) => {
+            let summary = summarize_invalid_utf8(&raw_bytes);
+            (String::from_utf8_lossy(&raw_bytes), Some(summary))
+        }
+    };
     let value: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
-        TranscriptionError::TranscriptUnavailable(format!(
-            "Unable to parse whisper output: {error}"
-        ))
+        let prefix = if sanitization.is_some() {
+            "Unable to parse sanitized whisper output"
+        } else {
+            "Unable to parse whisper output"
+        };
+        TranscriptionError::TranscriptUnavailable(format!("{prefix}: {error}"))
     })?;
 
     let source_segments = value
@@ -1936,12 +1985,97 @@ fn parse_whisper_json(path: &Path, language: &str) -> Result<TranscriptData, Tra
         .collect::<Vec<_>>()
         .join(" ");
 
-    Ok(TranscriptData {
-        version: 2,
-        language: language.to_string(),
-        text,
-        segments,
-    })
+    Ok((
+        TranscriptData {
+            version: 2,
+            language: language.to_string(),
+            text,
+            segments,
+        },
+        sanitization,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn write_whisper_fixture(bytes: &[u8]) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "scribe-whisper-json-test-{}-{}.json",
+            std::process::id(),
+            TEST_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, bytes).expect("write whisper fixture");
+        path
+    }
+
+    fn parse_fixture(
+        bytes: &[u8],
+    ) -> Result<(TranscriptData, Option<Utf8SanitizationSummary>), TranscriptionError> {
+        let path = write_whisper_fixture(bytes);
+        let result = parse_whisper_json_with_diagnostics(&path, "sl");
+        let _ = std::fs::remove_file(path);
+        result
+    }
+
+    #[test]
+    fn parses_valid_whisper_json_without_sanitization() {
+        let (transcript, sanitization) = parse_fixture(
+            br#"{"segments":[{"start":0.0,"end":1.2,"text":" hello world ","words":[{"word":"hello","start":0.0,"end":0.5},{"word":"world","start":0.6,"end":1.2}]}]}"#,
+        )
+        .expect("valid whisper json parses");
+
+        assert_eq!(sanitization, None);
+        assert_eq!(transcript.text, "hello world");
+        assert_eq!(transcript.segments.len(), 1);
+        assert!(!transcript.segments[0].words.is_empty());
+    }
+
+    #[test]
+    fn preserves_slovenian_unicode_text() {
+        let (transcript, sanitization) = parse_fixture(
+            r#"{"segments":[{"start":0.0,"end":2.0,"text":"č š ž Č Š Ž"}]}"#.as_bytes(),
+        )
+        .expect("slovenian whisper json parses");
+
+        assert_eq!(sanitization, None);
+        assert_eq!(transcript.text, "č š ž Č Š Ž");
+    }
+
+    #[test]
+    fn sanitizes_recoverable_invalid_utf8_inside_text() {
+        let mut bytes = br#"{"segments":[{"start":0.0,"end":2.0,"text":"dober "#.to_vec();
+        let invalid_offset = bytes.len();
+        bytes.push(0x80);
+        bytes.extend_from_slice(br#" dan"}]}"#);
+
+        let (transcript, sanitization) =
+            parse_fixture(&bytes).expect("recoverable invalid utf8 parses after sanitization");
+
+        assert_eq!(transcript.text, "dober � dan");
+        let sanitization = sanitization.expect("invalid utf8 was summarized");
+        assert_eq!(sanitization.invalid_sequence_count, 1);
+        assert_eq!(sanitization.first_offsets, vec![invalid_offset]);
+    }
+
+    #[test]
+    fn rejects_genuinely_malformed_json_after_sanitization() {
+        let mut bytes = br#"{"segments":[{"start":0.0,"end":2.0,"text":"dober "#.to_vec();
+        bytes.push(0x80);
+        bytes.extend_from_slice(br#" dan"}"#);
+
+        let error = parse_fixture(&bytes).expect_err("malformed json still fails");
+        match error {
+            TranscriptionError::TranscriptUnavailable(message) => {
+                assert!(message.contains("Unable to parse sanitized whisper output"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
 }
 
 #[tauri::command]
@@ -3437,8 +3571,28 @@ fn transcribe_recording_blocking(
         Some(metadata.duration_seconds),
     );
 
-    let transcript = match parse_whisper_json(&whisper_output_json, &transcription_language) {
-        Ok(transcript) => {
+    let transcript = match parse_whisper_json_with_diagnostics(
+        &whisper_output_json,
+        &transcription_language,
+    ) {
+        Ok((transcript, sanitization)) => {
+            if let Some(summary) = sanitization {
+                append_transcription_diagnostic(
+                    &app,
+                    &recording_id,
+                    format!(
+                        "stage=parse_utf8_sanitization result=applied invalid_sequence_count={} first_offsets={:?}",
+                        summary.invalid_sequence_count,
+                        summary.first_offsets
+                    ),
+                );
+                eprintln!(
+                    "Scribe transcription: sanitized invalid UTF-8 in whisper JSON recording_id={} invalid_sequence_count={} first_offsets={:?}",
+                    recording_id,
+                    summary.invalid_sequence_count,
+                    summary.first_offsets
+                );
+            }
             append_transcription_diagnostic(
                 &app,
                 &recording_id,

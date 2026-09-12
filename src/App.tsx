@@ -136,6 +136,14 @@ function logUpdaterError(context: "manual" | "startup" | "install", reason: unkn
 }
 
 const releaseNotes: Record<string, { itemKeys: TranslationKey[] }> = {
+  "0.1.8": {
+    itemKeys: [
+      "whatsNew018ImportTranscription",
+      "whatsNew018RecordingStart",
+      "whatsNew018MacInstaller",
+      "whatsNew018Icon",
+    ],
+  },
   "0.1.7": {
     itemKeys: [
       "whatsNew017RecordingStartup",

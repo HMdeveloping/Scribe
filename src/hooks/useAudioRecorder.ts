@@ -8,7 +8,7 @@ const MIME_TYPE_CANDIDATES = [
   "audio/mp4",
 ];
 
-const CHUNK_TIMESLICE_MS = 1000;
+const CHUNK_TIMESLICE_MS = 250;
 
 type RecorderStatus = "idle" | "preparing" | "recording" | "paused" | "stopped" | "error";
 
@@ -26,6 +26,8 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
   const stopPromiseRef = useRef<Promise<Blob> | null>(null);
   const startedAtRef = useRef<number | null>(null);
   const firstChunkReceivedRef = useRef(false);
+  const startRequestedAtRef = useRef<number | null>(null);
+  const chunkCountRef = useRef(0);
 
   useEffect(() => {
     if (!stream || recorderRef.current) return;
@@ -35,6 +37,7 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
       console.info("[recording-lifecycle] media_stream_ready", {
         audioTracks: stream.getAudioTracks().length,
         active: stream.active,
+        performanceNowMs: Math.round(performance.now()),
       });
       setStatus("preparing");
       const selectedMimeType = getSupportedMimeType();
@@ -46,22 +49,34 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
       chunksRef.current = [];
       firstChunkReceivedRef.current = false;
       startedAtRef.current = null;
+      startRequestedAtRef.current = null;
+      chunkCountRef.current = 0;
       setMimeType(recorder.mimeType || selectedMimeType);
       console.info("[recording-lifecycle] media_recorder_created", {
         mimeType: recorder.mimeType || selectedMimeType || "",
         state: recorder.state,
+        timesliceMs: CHUNK_TIMESLICE_MS,
+        performanceNowMs: Math.round(performance.now()),
       });
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
+          chunkCountRef.current += 1;
+          const elapsedMs = startedAtRef.current === null ? null : Math.round(performance.now() - startedAtRef.current);
           if (!firstChunkReceivedRef.current) {
             firstChunkReceivedRef.current = true;
             console.info("[recording-lifecycle] first_dataavailable", {
               size: event.data.size,
-              elapsedMs: startedAtRef.current === null ? null : Math.round(performance.now() - startedAtRef.current),
+              elapsedMs,
+              performanceNowMs: Math.round(performance.now()),
             });
           }
+          console.info("[recording-lifecycle] dataavailable", {
+            chunkIndex: chunkCountRef.current,
+            size: event.data.size,
+            elapsedMs,
+          });
         }
       };
       recorder.onerror = (event) => {
@@ -73,6 +88,8 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
         startedAtRef.current = performance.now();
         console.info("[recording-lifecycle] media_recorder_onstart", {
           state: recorder?.state,
+          startDelayMs: startRequestedAtRef.current === null ? null : Math.round(startedAtRef.current - startRequestedAtRef.current),
+          performanceNowMs: Math.round(startedAtRef.current),
         });
         setStatus("recording");
       };
@@ -87,7 +104,13 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
         });
         setStatus("stopped");
       };
+      startRequestedAtRef.current = performance.now();
       recorder.start(CHUNK_TIMESLICE_MS);
+      console.info("[recording-lifecycle] media_recorder_start_called", {
+        state: recorder.state,
+        timesliceMs: CHUNK_TIMESLICE_MS,
+        performanceNowMs: Math.round(startRequestedAtRef.current),
+      });
     } catch (reason) {
       console.error("Scribe: MediaRecorder initialization failed", reason);
       setError("Unable to record audio.");
@@ -103,6 +126,8 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
       stopPromiseRef.current = null;
       startedAtRef.current = null;
       firstChunkReceivedRef.current = false;
+      startRequestedAtRef.current = null;
+      chunkCountRef.current = 0;
     };
   }, [stream]);
 
@@ -129,6 +154,7 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
           console.info("[recording-lifecycle] final_blob", {
             size: blob.size,
             type: blob.type,
+            chunks: chunksRef.current.length,
             elapsedRecordingDurationMs: startedAtRef.current === null ? 0 : Math.round(performance.now() - startedAtRef.current),
           });
           resolve(blob);
@@ -143,6 +169,11 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
           recorder.removeEventListener("stop", finalize);
           finalize();
         } else {
+          console.info("[recording-lifecycle] media_recorder_request_data_before_stop", {
+            state: recorder.state,
+            chunksBeforeRequest: chunksRef.current.length,
+            elapsedRecordingDurationMs: startedAtRef.current === null ? 0 : Math.round(performance.now() - startedAtRef.current),
+          });
           recorder.requestData();
           recorder.stop();
         }
@@ -184,6 +215,8 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
       stopPromiseRef.current = null;
       startedAtRef.current = null;
       firstChunkReceivedRef.current = false;
+      startRequestedAtRef.current = null;
+      chunkCountRef.current = 0;
     };
   }, []);
 

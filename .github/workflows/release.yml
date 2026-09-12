@@ -305,6 +305,28 @@ jobs:
           otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
           ! otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli" | grep -E '/opt/homebrew|/usr/local'
 
+      - name: Verify macOS release DMG layout assets
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg_candidates=(src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg)
+          if [ ${#dmg_candidates[@]} -ne 1 ]; then
+            echo "Expected exactly one generated DMG, found ${#dmg_candidates[@]}"
+            printf '%s\n' "${dmg_candidates[@]}"
+            exit 1
+          fi
+          dmg_path="${dmg_candidates[0]}"
+          mount_output="$(hdiutil attach "$dmg_path" -nobrowse -readonly)"
+          echo "$mount_output"
+          volume_path="$(printf '%s\n' "$mount_output" | awk 'END {print $NF}')"
+          trap 'hdiutil detach "$volume_path"' EXIT
+          test -d "$volume_path/Scribe.app"
+          test -L "$volume_path/Applications"
+          test -f "$volume_path/.background/dmg-background.png"
+          test -s "$volume_path/.DS_Store"
+          shasum -a 256 "$dmg_path"
+
       - name: Upload release bundle artifacts
         if: github.event_name == 'push' || inputs.publish_release == true
         uses: actions/upload-artifact@v4

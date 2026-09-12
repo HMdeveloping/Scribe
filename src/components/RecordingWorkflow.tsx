@@ -82,7 +82,10 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
 
   useEffect(() => {
     mountedRef.current = true;
-    console.info("[recording-lifecycle] start_requested");
+    console.info("[recording-lifecycle] start_requested", {
+      performanceNowMs: Math.round(performance.now()),
+      wallClock: new Date().toISOString(),
+    });
     console.info("[recording-timer] session start");
     accumulatedElapsedMs.current = 0;
     startedAtMs.current = null;
@@ -192,6 +195,8 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
     console.info("[recording-lifecycle] stop_requested", {
       recorderStatus: recorder.status,
       elapsedMs,
+      performanceNowMs: Math.round(performance.now()),
+      wallClock: new Date().toISOString(),
     });
     const sessionToken = sessionTokenRef.current;
     setPhase("stopping");
