@@ -45,7 +45,7 @@ const WHISPER_MODELS: &[WhisperModelDefinition] = &[
         filename: "ggml-medium.bin",
         badge: "Balanced",
         description: "Balanced speed and accuracy",
-        expected_bytes: Some(1_533_763_078),
+        expected_bytes: Some(1_533_763_059),
     },
     WhisperModelDefinition {
         id: "large-v3-turbo",
@@ -61,7 +61,7 @@ const WHISPER_MODELS: &[WhisperModelDefinition] = &[
         filename: "ggml-large-v3.bin",
         badge: "Best quality",
         description: "Best accuracy, slower and more demanding",
-        expected_bytes: Some(3_099_699_757),
+        expected_bytes: Some(3_095_033_483),
     },
 ];
 
@@ -2645,6 +2645,14 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
     }
 
     let url = model_url(model);
+    eprintln!(
+        "Scribe model download: starting model_id={} filename={} expected_bytes={:?} final_path={} temp_path={}",
+        model.id,
+        model.filename,
+        model.expected_bytes,
+        final_path.display(),
+        temp_path.display()
+    );
     let progress_model_id = model.id.to_string();
     let emit_progress = |state: &str, downloaded_bytes: u64, total_bytes: Option<u64>| {
         let percent = total_bytes
@@ -2665,15 +2673,49 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
     emit_progress("downloading", 0, model.expected_bytes);
 
     let client = reqwest::blocking::Client::new();
-    let mut response = client
-        .get(&url)
-        .send()
-        .map_err(|error| format!("Unable to start model download: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Model download failed: {error}"))?;
-    let total_bytes = response.content_length().or(model.expected_bytes);
-    let mut file = File::create(&temp_path)
-        .map_err(|error| format!("Unable to create temporary model file: {error}"))?;
+    let response = client.get(&url).send().map_err(|error| {
+        eprintln!(
+            "Scribe model download: request failed model_id={} filename={} temp_path={} error_category=connection error={}",
+            model.id,
+            model.filename,
+            temp_path.display(),
+            error
+        );
+        format!("Unable to start model download: {error}")
+    })?;
+    let status = response.status();
+    eprintln!(
+        "Scribe model download: response received model_id={} filename={} http_status={} content_length={:?}",
+        model.id,
+        model.filename,
+        status,
+        response.content_length()
+    );
+    let initial_content_length = response.content_length();
+    let mut response = response.error_for_status().map_err(|error| {
+        eprintln!(
+            "Scribe model download: HTTP status failure model_id={} filename={} http_status={} content_length={:?} error_category=http error={}",
+            model.id,
+            model.filename,
+            status,
+            initial_content_length,
+            error
+        );
+        format!("Model download failed: {error}")
+    })?;
+    let response_content_length = response.content_length();
+    let total_bytes = response_content_length.or(model.expected_bytes);
+    let expected_downloaded_bytes = response_content_length.or(model.expected_bytes);
+    let mut file = File::create(&temp_path).map_err(|error| {
+        eprintln!(
+            "Scribe model download: unable to create temp file model_id={} filename={} temp_path={} error_category=storage error={}",
+            model.id,
+            model.filename,
+            temp_path.display(),
+            error
+        );
+        format!("Unable to create temporary model file: {error}")
+    })?;
 
     let mut downloaded = 0_u64;
     let mut buffer = [0_u8; 1024 * 1024];
@@ -2686,6 +2728,15 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
         }
         let read = response.read(&mut buffer).map_err(|error| {
             let _ = std::fs::remove_file(&temp_path);
+            eprintln!(
+                "Scribe model download: stream read failed model_id={} filename={} downloaded_bytes={} total_bytes={:?} temp_path={} error_category=download error={}",
+                model.id,
+                model.filename,
+                downloaded,
+                total_bytes,
+                temp_path.display(),
+                error
+            );
             format!("Unable to read model download: {error}")
         })?;
         if read == 0 {
@@ -2693,6 +2744,16 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
         }
         file.write_all(&buffer[..read]).map_err(|error| {
             let _ = std::fs::remove_file(&temp_path);
+            eprintln!(
+                "Scribe model download: write failed model_id={} filename={} downloaded_bytes={} total_bytes={:?} temp_path={} temp_size={:?} error_category=storage error={}",
+                model.id,
+                model.filename,
+                downloaded,
+                total_bytes,
+                temp_path.display(),
+                file_size(&temp_path),
+                error
+            );
             format!("Unable to write model download: {error}")
         })?;
         downloaded += read as u64;
@@ -2705,22 +2766,80 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
         return Ok(());
     }
     file.flush()
-        .map_err(|error| format!("Unable to flush model download: {error}"))?;
+        .map_err(|error| {
+            eprintln!(
+                "Scribe model download: flush failed model_id={} filename={} downloaded_bytes={} total_bytes={:?} temp_path={} temp_size={:?} error_category=storage error={}",
+                model.id,
+                model.filename,
+                downloaded,
+                total_bytes,
+                temp_path.display(),
+                file_size(&temp_path),
+                error
+            );
+            format!("Unable to flush model download: {error}")
+        })?;
+    eprintln!(
+        "Scribe model download: stream completed model_id={} filename={} downloaded_bytes={} content_length={:?} expected_bytes={:?} temp_path={} temp_size={:?}",
+        model.id,
+        model.filename,
+        downloaded,
+        response_content_length,
+        model.expected_bytes,
+        temp_path.display(),
+        file_size(&temp_path)
+    );
 
     if downloaded == 0 {
         let _ = std::fs::remove_file(&temp_path);
+        eprintln!(
+            "Scribe model download: empty download model_id={} filename={} temp_path={} error_category=incomplete",
+            model.id,
+            model.filename,
+            temp_path.display()
+        );
         return Err("Downloaded model was empty".to_string());
     }
-    if let Some(expected_bytes) = model.expected_bytes {
+    if let Some(expected_bytes) = expected_downloaded_bytes {
         if downloaded != expected_bytes {
             let _ = std::fs::remove_file(&temp_path);
+            eprintln!(
+                "Scribe model download: size mismatch model_id={} filename={} downloaded_bytes={} expected_bytes={} content_length={:?} hardcoded_expected_bytes={:?} temp_path={} error_category=incomplete",
+                model.id,
+                model.filename,
+                downloaded,
+                expected_bytes,
+                response_content_length,
+                model.expected_bytes,
+                temp_path.display()
+            );
             return Err("Downloaded model size did not match the expected size".to_string());
         }
     }
 
     emit_progress("installing", downloaded, Some(downloaded));
-    std::fs::rename(&temp_path, &final_path)
-        .map_err(|error| format!("Unable to install downloaded model: {error}"))?;
+    std::fs::rename(&temp_path, &final_path).map_err(|error| {
+        eprintln!(
+            "Scribe model download: rename failed model_id={} filename={} downloaded_bytes={} temp_path={} temp_size={:?} final_path={} final_size={:?} error_category=storage error={}",
+            model.id,
+            model.filename,
+            downloaded,
+            temp_path.display(),
+            file_size(&temp_path),
+            final_path.display(),
+            file_size(&final_path),
+            error
+        );
+        format!("Unable to install downloaded model: {error}")
+    })?;
+    eprintln!(
+        "Scribe model download: installed model_id={} filename={} downloaded_bytes={} final_path={} final_size={:?}",
+        model.id,
+        model.filename,
+        downloaded,
+        final_path.display(),
+        file_size(&final_path)
+    );
     emit_progress("installed", downloaded, Some(downloaded));
     Ok(())
 }
