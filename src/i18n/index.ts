@@ -258,6 +258,7 @@ const en = {
   whatsNew0111Icon: "Improved the Scribe icon display on macOS",
   whatsNew0112FollowLayout: "Improved the transcript follow button layout",
   whatsNew0113ViewportLayout: "Improved the app layout at different window sizes",
+  whatsNew0114RepetitionHallucinations: "Improved prevention of repeated transcript sections",
   welcomeToScribe: "Welcome to Scribe",
   onboardingWelcomeCopy: "Record, import, and transcribe audio with a local-first workspace.",
   onboardingRecordImport: "Record or import audio",
@@ -401,6 +402,19 @@ const whatsNew0113Translations: Record<AppLanguage, Pick<Dictionary, "whatsNew01
   pt: { whatsNew0113ViewportLayout: "Layout da app melhorado em diferentes tamanhos de janela" },
   nl: { whatsNew0113ViewportLayout: "Verbeterde app-indeling bij verschillende vensterformaten" },
   pl: { whatsNew0113ViewportLayout: "Ulepszony układ aplikacji przy różnych rozmiarach okna" },
+};
+
+const whatsNew0114Translations: Record<AppLanguage, Pick<Dictionary, "whatsNew0114RepetitionHallucinations">> = {
+  sl: { whatsNew0114RepetitionHallucinations: "Izboljšano preprečevanje ponavljajočih se delov prepisa." },
+  en: { whatsNew0114RepetitionHallucinations: "Improved prevention of repeated transcript sections." },
+  de: { whatsNew0114RepetitionHallucinations: "Verbesserte Vermeidung wiederholter Transkriptabschnitte." },
+  es: { whatsNew0114RepetitionHallucinations: "Mejor prevención de secciones repetidas en la transcripción." },
+  it: { whatsNew0114RepetitionHallucinations: "Prevenzione migliorata delle sezioni ripetute nella trascrizione." },
+  hr: { whatsNew0114RepetitionHallucinations: "Poboljšano sprječavanje ponavljajućih dijelova transkripta." },
+  fr: { whatsNew0114RepetitionHallucinations: "Meilleure prévention des sections répétées dans la transcription." },
+  pt: { whatsNew0114RepetitionHallucinations: "Prevenção melhorada de secções repetidas na transcrição." },
+  nl: { whatsNew0114RepetitionHallucinations: "Verbeterde voorkoming van herhaalde transcriptiedelen." },
+  pl: { whatsNew0114RepetitionHallucinations: "Ulepszone zapobieganie powtarzającym się fragmentom transkrypcji." },
 };
 
 const updaterErrorTranslations: Record<AppLanguage, Partial<Dictionary>> = {
@@ -548,6 +562,7 @@ for (const language of languages) {
   Object.assign(dictionaries[language.code], whatsNewTranslations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0112Translations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0113Translations[language.code]);
+  Object.assign(dictionaries[language.code], whatsNew0114Translations[language.code]);
   Object.assign(dictionaries[language.code], updaterErrorTranslations[language.code]);
   if (language.code !== "en") Object.assign(dictionaries[language.code], v01ProgressTranslations[language.code], onboardingTranslations[language.code], modelRecoveryTranslations[language.code], reliabilityTranslations[language.code]);
 }

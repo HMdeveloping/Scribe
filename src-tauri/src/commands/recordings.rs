@@ -155,7 +155,7 @@ pub struct LoadRecordingAudioResult {
     mime_type: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptSegment {
     start: f64,
@@ -1903,6 +1903,116 @@ struct Utf8SanitizationSummary {
     first_offsets: Vec<usize>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct RepetitionFilterSummary {
+    candidates: usize,
+    removed_segments: usize,
+}
+
+fn normalized_repetition_key(text: &str) -> String {
+    text.chars()
+        .flat_map(|character| character.to_lowercase())
+        .map(|character| {
+            if character.is_alphanumeric() || matches!(character, 'č' | 'š' | 'ž' | 'Č' | 'Š' | 'Ž')
+            {
+                character
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn has_reliable_segment_timing(segment: &TranscriptSegment) -> bool {
+    segment.start.is_finite()
+        && segment.end.is_finite()
+        && segment.start >= 0.0
+        && segment.end > segment.start
+}
+
+fn looks_like_repetition_loop_run(
+    segments: &[TranscriptSegment],
+    start: usize,
+    end: usize,
+) -> bool {
+    const MIN_LOOP_REPETITIONS: usize = 3;
+    const MAX_REPEATED_WORDS: usize = 6;
+    const MAX_REPEATED_CHARS: usize = 60;
+    const MAX_ADJACENT_GAP_SECONDS: f64 = 1.25;
+    const MAX_SEGMENT_DURATION_SECONDS: f64 = 4.0;
+
+    let run_len = end - start;
+    if run_len < MIN_LOOP_REPETITIONS {
+        return false;
+    }
+
+    let first = &segments[start];
+    let word_count = normalized_repetition_key(&first.text)
+        .split_whitespace()
+        .count();
+    if word_count == 0
+        || word_count > MAX_REPEATED_WORDS
+        || first.text.chars().count() > MAX_REPEATED_CHARS
+    {
+        return false;
+    }
+
+    let run = &segments[start..end];
+    if !run.iter().all(has_reliable_segment_timing) {
+        return false;
+    }
+    if !run
+        .iter()
+        .all(|segment| segment.end - segment.start <= MAX_SEGMENT_DURATION_SECONDS)
+    {
+        return false;
+    }
+
+    run.windows(2).all(|pair| {
+        let previous = &pair[0];
+        let next = &pair[1];
+        let gap = next.start - previous.end;
+        gap >= -0.05 && gap <= MAX_ADJACENT_GAP_SECONDS
+    })
+}
+
+fn filter_repetition_loops(
+    segments: Vec<TranscriptSegment>,
+) -> (Vec<TranscriptSegment>, RepetitionFilterSummary) {
+    let mut filtered = Vec::with_capacity(segments.len());
+    let mut summary = RepetitionFilterSummary::default();
+    let mut index = 0;
+
+    while index < segments.len() {
+        let key = normalized_repetition_key(&segments[index].text);
+        if key.is_empty() {
+            filtered.push(segments[index].clone());
+            index += 1;
+            continue;
+        }
+
+        let mut end = index + 1;
+        while end < segments.len() && normalized_repetition_key(&segments[end].text) == key {
+            end += 1;
+        }
+
+        if looks_like_repetition_loop_run(&segments, index, end) {
+            summary.candidates += 1;
+            filtered.push(segments[index].clone());
+            summary.removed_segments += end - index - 1;
+        } else {
+            filtered.extend_from_slice(&segments[index..end]);
+        }
+
+        index = end;
+    }
+
+    (filtered, summary)
+}
+
 fn summarize_invalid_utf8(bytes: &[u8]) -> Utf8SanitizationSummary {
     let mut invalid_sequence_count = 0;
     let mut first_offsets = Vec::new();
@@ -1936,7 +2046,14 @@ fn summarize_invalid_utf8(bytes: &[u8]) -> Utf8SanitizationSummary {
 fn parse_whisper_json_with_diagnostics(
     path: &Path,
     language: &str,
-) -> Result<(TranscriptData, Option<Utf8SanitizationSummary>), TranscriptionError> {
+) -> Result<
+    (
+        TranscriptData,
+        Option<Utf8SanitizationSummary>,
+        RepetitionFilterSummary,
+    ),
+    TranscriptionError,
+> {
     let raw_bytes = std::fs::read(path).map_err(|error| {
         TranscriptionError::TranscriptUnavailable(format!("Unable to read whisper output: {error}"))
     })?;
@@ -2003,6 +2120,8 @@ fn parse_whisper_json_with_diagnostics(
         });
     }
 
+    let (segments, repetition_filter) = filter_repetition_loops(segments);
+
     let text = segments
         .iter()
         .map(|segment| segment.text.as_str())
@@ -2017,6 +2136,7 @@ fn parse_whisper_json_with_diagnostics(
             segments,
         },
         sanitization,
+        repetition_filter,
     ))
 }
 
@@ -2039,7 +2159,14 @@ mod tests {
 
     fn parse_fixture(
         bytes: &[u8],
-    ) -> Result<(TranscriptData, Option<Utf8SanitizationSummary>), TranscriptionError> {
+    ) -> Result<
+        (
+            TranscriptData,
+            Option<Utf8SanitizationSummary>,
+            RepetitionFilterSummary,
+        ),
+        TranscriptionError,
+    > {
         let path = write_whisper_fixture(bytes);
         let result = parse_whisper_json_with_diagnostics(&path, "sl");
         let _ = std::fs::remove_file(path);
@@ -2048,12 +2175,13 @@ mod tests {
 
     #[test]
     fn parses_valid_whisper_json_without_sanitization() {
-        let (transcript, sanitization) = parse_fixture(
+        let (transcript, sanitization, repetition_filter) = parse_fixture(
             br#"{"segments":[{"start":0.0,"end":1.2,"text":" hello world ","words":[{"word":"hello","start":0.0,"end":0.5},{"word":"world","start":0.6,"end":1.2}]}]}"#,
         )
         .expect("valid whisper json parses");
 
         assert_eq!(sanitization, None);
+        assert_eq!(repetition_filter.removed_segments, 0);
         assert_eq!(transcript.text, "hello world");
         assert_eq!(transcript.segments.len(), 1);
         assert!(!transcript.segments[0].words.is_empty());
@@ -2061,7 +2189,7 @@ mod tests {
 
     #[test]
     fn preserves_slovenian_unicode_text() {
-        let (transcript, sanitization) = parse_fixture(
+        let (transcript, sanitization, _) = parse_fixture(
             r#"{"segments":[{"start":0.0,"end":2.0,"text":"č š ž Č Š Ž"}]}"#.as_bytes(),
         )
         .expect("slovenian whisper json parses");
@@ -2077,7 +2205,7 @@ mod tests {
         bytes.push(0x80);
         bytes.extend_from_slice(br#" dan"}]}"#);
 
-        let (transcript, sanitization) =
+        let (transcript, sanitization, _) =
             parse_fixture(&bytes).expect("recoverable invalid utf8 parses after sanitization");
 
         assert_eq!(transcript.text, "dober dan");
@@ -2108,7 +2236,7 @@ mod tests {
 
     #[test]
     fn sanitizes_replacement_artifacts_in_segments_and_words() {
-        let (transcript, _) = parse_fixture(
+        let (transcript, _, _) = parse_fixture(
             r#"{"segments":[{"start":0.0,"end":2.0,"text":"fantje. � �e tako","words":[{"word":"fantje.","start":0.0,"end":0.5},{"word":"�","start":0.5,"end":0.6},{"word":"�e","start":0.6,"end":1.0},{"word":"tako","start":1.0,"end":1.5}]}]}"#.as_bytes(),
         )
         .expect("replacement artifact json parses");
@@ -2123,7 +2251,7 @@ mod tests {
 
     #[test]
     fn preserves_whisper_token_leading_space_word_boundaries() {
-        let (transcript, _) = parse_fixture(
+        let (transcript, _, _) = parse_fixture(
             r#"{"segments":[{"start":0.0,"end":3.0,"text":"To je normalen slovenski prepis.","tokens":[{"text":"To","start":0.0,"end":0.2},{"text":" je","start":0.2,"end":0.4},{"text":" normalen","start":0.4,"end":0.9},{"text":" slovenski","start":0.9,"end":1.5},{"text":" prepis","start":1.5,"end":2.0},{"text":".","start":2.0,"end":2.1}]}]}"#.as_bytes(),
         )
         .expect("tokenized whisper json parses");
@@ -2154,7 +2282,7 @@ mod tests {
 
     #[test]
     fn parses_empty_transcript_without_panicking() {
-        let (transcript, sanitization) =
+        let (transcript, sanitization, _) =
             parse_fixture(br#"{"segments":[]}"#).expect("empty whisper json parses");
 
         assert_eq!(sanitization, None);
@@ -2165,7 +2293,7 @@ mod tests {
 
     #[test]
     fn preserves_punctuation_and_meaningful_whitespace() {
-        let (transcript, _) = parse_fixture(
+        let (transcript, _, _) = parse_fixture(
             r#"{"segments":[{"start":0.0,"end":2.0,"text":"  Pozdravljeni, svet!  Kako ste?  ","tokens":[{"text":"Pozdravljeni","start":0.0,"end":0.4},{"text":",","start":0.4,"end":0.45},{"text":" svet","start":0.45,"end":0.8},{"text":"!","start":0.8,"end":0.85},{"text":" Kako","start":0.85,"end":1.2},{"text":" ste","start":1.2,"end":1.6},{"text":"?","start":1.6,"end":1.65}]}]}"#.as_bytes(),
         )
         .expect("punctuated whisper json parses");
@@ -2180,6 +2308,99 @@ mod tests {
     }
 
     #[test]
+    fn filters_obvious_short_segment_repetition_loop() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":0.0,"end":1.4,"text":"To je uvod.","words":[{"word":"To","start":0.0,"end":0.2},{"word":" je","start":0.2,"end":0.4},{"word":" uvod.","start":0.4,"end":1.0}]},
+                {"start":10.0,"end":10.9,"text":"Vamo videti.","words":[{"word":"Vamo","start":10.0,"end":10.35},{"word":" videti.","start":10.35,"end":10.9}]},
+                {"start":11.0,"end":11.9,"text":"Vamo videti.","words":[{"word":"Vamo","start":11.0,"end":11.35},{"word":" videti.","start":11.35,"end":11.9}]},
+                {"start":12.0,"end":12.9,"text":"Vamo videti.","words":[{"word":"Vamo","start":12.0,"end":12.35},{"word":" videti.","start":12.35,"end":12.9}]},
+                {"start":13.0,"end":13.9,"text":"Vamo videti.","words":[{"word":"Vamo","start":13.0,"end":13.35},{"word":" videti.","start":13.35,"end":13.9}]},
+                {"start":14.0,"end":14.9,"text":"Vamo videti.","words":[{"word":"Vamo","start":14.0,"end":14.35},{"word":" videti.","start":14.35,"end":14.9}]},
+                {"start":22.0,"end":23.2,"text":"Naslednji stavek.","words":[{"word":"Naslednji","start":22.0,"end":22.5},{"word":" stavek.","start":22.5,"end":23.2}]}
+            ]}"#.as_bytes(),
+        )
+        .expect("repetition fixture parses");
+
+        assert_eq!(repetition_filter.candidates, 1);
+        assert_eq!(repetition_filter.removed_segments, 4);
+        assert_eq!(transcript.segments.len(), 3);
+        assert_eq!(
+            transcript.text,
+            "To je uvod. Vamo videti. Naslednji stavek."
+        );
+    }
+
+    #[test]
+    fn preserves_legitimate_double_repetition() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":0.0,"end":1.0,"text":"To je pomembno."},
+                {"start":1.1,"end":2.1,"text":"To je pomembno."}
+            ]}"#
+            .as_bytes(),
+        )
+        .expect("double repetition fixture parses");
+
+        assert_eq!(repetition_filter.removed_segments, 0);
+        assert_eq!(transcript.segments.len(), 2);
+        assert_eq!(transcript.text, "To je pomembno. To je pomembno.");
+    }
+
+    #[test]
+    fn preserves_legitimate_spaced_repetition() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":0.0,"end":1.0,"text":"To je pomembno."},
+                {"start":8.0,"end":9.0,"text":"Zato poslušajte."},
+                {"start":28.0,"end":29.0,"text":"To je pomembno."}
+            ]}"#
+            .as_bytes(),
+        )
+        .expect("spaced repetition fixture parses");
+
+        assert_eq!(repetition_filter.removed_segments, 0);
+        assert_eq!(transcript.segments.len(), 3);
+        assert_eq!(
+            transcript.text,
+            "To je pomembno. Zato poslušajte. To je pomembno."
+        );
+    }
+
+    #[test]
+    fn preserves_natural_repeated_words_inside_segment() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[{"start":0.0,"end":1.0,"text":"ne, ne, ne","words":[{"word":"ne,","start":0.0,"end":0.2},{"word":" ne,","start":0.3,"end":0.5},{"word":" ne","start":0.6,"end":0.8}]}]}"#.as_bytes(),
+        )
+        .expect("natural repeated words fixture parses");
+
+        assert_eq!(repetition_filter.removed_segments, 0);
+        assert_eq!(transcript.text, "ne, ne, ne");
+        assert_eq!(transcript.segments.len(), 1);
+    }
+
+    #[test]
+    fn repetition_filter_preserves_slovenian_unicode_and_word_timestamps() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":3.0,"end":4.0,"text":"Č š ž, prav?","words":[{"word":"Č","start":3.0,"end":3.1},{"word":" š","start":3.2,"end":3.3},{"word":" ž,","start":3.4,"end":3.5},{"word":" prav?","start":3.6,"end":4.0}]},
+                {"start":5.0,"end":5.7,"text":"Vamo videti.","words":[{"word":"Vamo","start":5.0,"end":5.25},{"word":" videti.","start":5.25,"end":5.7}]},
+                {"start":5.8,"end":6.5,"text":"Vamo videti.","words":[{"word":"Vamo","start":5.8,"end":6.05},{"word":" videti.","start":6.05,"end":6.5}]},
+                {"start":6.6,"end":7.3,"text":"Vamo videti.","words":[{"word":"Vamo","start":6.6,"end":6.85},{"word":" videti.","start":6.85,"end":7.3}]}
+            ]}"#.as_bytes(),
+        )
+        .expect("unicode repetition fixture parses");
+
+        assert_eq!(repetition_filter.removed_segments, 2);
+        assert_eq!(transcript.text, "Č š ž, prav? Vamo videti.");
+        assert_eq!(transcript.segments[0].text, "Č š ž, prav?");
+        assert_eq!(transcript.segments[1].words[0].start, 5.0);
+        assert_eq!(transcript.segments[1].words[0].end, 5.25);
+        assert_eq!(transcript.segments[1].words[1].start, 5.25);
+        assert_eq!(transcript.segments[1].words[1].end, 5.7);
+    }
+
+    #[test]
     fn parses_large_transcript_fixture() {
         let mut segments = Vec::new();
         for index in 0..250 {
@@ -2191,7 +2412,7 @@ mod tests {
             ));
         }
         let fixture = format!(r#"{{"segments":[{}]}}"#, segments.join(","));
-        let (transcript, sanitization) =
+        let (transcript, sanitization, _) =
             parse_fixture(fixture.as_bytes()).expect("large whisper json parses");
 
         assert_eq!(sanitization, None);
@@ -3833,7 +4054,7 @@ fn transcribe_recording_blocking(
         &whisper_output_json,
         &transcription_language,
     ) {
-        Ok((transcript, sanitization)) => {
+        Ok((transcript, sanitization, repetition_filter)) => {
             if let Some(summary) = sanitization {
                 append_transcription_diagnostic(
                     &app,
@@ -3849,6 +4070,20 @@ fn transcribe_recording_blocking(
                     recording_id,
                     summary.invalid_sequence_count,
                     summary.first_offsets
+                );
+            }
+            if repetition_filter.candidates > 0 || repetition_filter.removed_segments > 0 {
+                append_transcription_diagnostic(
+                    &app,
+                    &recording_id,
+                    format!(
+                        "stage=parse_repetition_filter candidates={} removed_segments={}",
+                        repetition_filter.candidates, repetition_filter.removed_segments
+                    ),
+                );
+                eprintln!(
+                    "Scribe transcription: repetition filter recording_id={} candidates={} removed_segments={}",
+                    recording_id, repetition_filter.candidates, repetition_filter.removed_segments
                 );
             }
             append_transcription_diagnostic(
