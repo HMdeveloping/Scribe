@@ -42,8 +42,8 @@ body,
 #root {
   width: 100%;
   height: 100%;
-  min-height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
@@ -477,17 +477,20 @@ button {
   min-height: 0;
   height: 100%;
 
-  overflow-y: auto;
+  overflow: hidden;
 
   background: #ffffff;
 }
 
 .home {
   width: min(850px, calc(100% - 72px));
+  height: 100%;
+  min-height: 0;
 
   margin: 0 auto;
 
   padding: 94px 0 80px;
+  overflow-y: auto;
 
   container-type: inline-size;
   container-name: home;
@@ -1143,9 +1146,11 @@ button {
 
 .library-view {
   width: min(900px, calc(100% - 72px));
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   margin: 0 auto;
   padding: 64px 0 80px;
+  overflow-y: auto;
 }
 
 .back-button {
@@ -1569,9 +1574,11 @@ button {
 
 .settings-view {
   width: min(900px, calc(100% - 72px));
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   margin: 0 auto;
   padding: 64px 0 80px;
+  overflow-y: auto;
 }
 
 .settings-view > header h1 {
@@ -2422,11 +2429,13 @@ button {
 .recording-view,
 .transcript-view {
   width: min(760px, calc(100% - 72px));
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   margin: 0 auto;
-  padding: 64px 0 28px;
+  padding: 64px 0 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .recording-view {
@@ -2510,7 +2519,9 @@ button {
 .live-transcript {
   width: 100%;
   flex: 1;
+  min-height: 0;
   padding: 40px 0 48px;
+  overflow-y: auto;
 }
 
 .live-transcript h2 {
@@ -2533,6 +2544,7 @@ button {
   display: flex;
   gap: 12px;
   padding: 12px 0;
+  flex: 0 0 auto;
 }
 
 .recording-controls button {
@@ -2627,10 +2639,15 @@ button {
 }
 
 .transcript-view h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.03em; }
+.transcript-view > header {
+  flex: 0 0 auto;
+}
+
 .transcript-metadata { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 12px 0 0; color: var(--secondary); font-size: 13px; }
 
 .transcript-tabs {
   display: flex;
+  flex: 0 0 auto;
   gap: 24px;
   margin-top: 38px;
   border-bottom: 1px solid var(--border);
@@ -2658,13 +2675,14 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .transcript-scroll-area {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 32px 0 32px;
-  max-height: calc(100vh - 320px);
 }
 
 .transcript-segment {
@@ -2710,27 +2728,22 @@ button {
 }
 
 .transcript-placeholder {
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 0;
+  padding: 32px 0;
   color: var(--secondary);
   font-size: 16px;
   line-height: 1.8;
+  overflow-y: auto;
 }
 
 .follow-transcript-slot {
-  --transcript-player-bottom-inset: 28px;
-  --transcript-player-height: 70px;
-  --transcript-follow-gap: 14px;
-  min-height: 46px;
+  min-height: 50px;
   display: flex;
   align-items: center;
   justify-content: center;
-  position: sticky;
-  bottom: calc(
-    var(--transcript-player-bottom-inset) + var(--transcript-player-height) +
-      var(--transcript-follow-gap)
-  );
-  z-index: 6;
-  pointer-events: none;
+  flex: 0 0 auto;
 }
 
 .follow-transcript-btn {
@@ -2746,7 +2759,6 @@ button {
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(73, 103, 242, 0.08);
   transition: background 120ms ease, box-shadow 120ms ease;
-  pointer-events: auto;
 }
 
 .follow-transcript-btn:hover {
@@ -2755,9 +2767,7 @@ button {
 }
 
 .audio-player-shell {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
+  flex: 0 0 auto;
   padding: 0 0 28px;
 }
 

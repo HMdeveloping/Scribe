@@ -257,6 +257,7 @@ const en = {
   whatsNew0111RecordingStart: "Further improved recording start",
   whatsNew0111Icon: "Improved the Scribe icon display on macOS",
   whatsNew0112FollowLayout: "Improved the transcript follow button layout",
+  whatsNew0113ViewportLayout: "Improved the app layout at different window sizes",
   welcomeToScribe: "Welcome to Scribe",
   onboardingWelcomeCopy: "Record, import, and transcribe audio with a local-first workspace.",
   onboardingRecordImport: "Record or import audio",
@@ -387,6 +388,19 @@ const whatsNew0112Translations: Record<AppLanguage, Pick<Dictionary, "whatsNew01
   pt: { whatsNew0112FollowLayout: "Layout melhorado do botão para seguir a transcrição" },
   nl: { whatsNew0112FollowLayout: "Verbeterde indeling van de knop voor transcript volgen" },
   pl: { whatsNew0112FollowLayout: "Ulepszony układ przycisku śledzenia transkrypcji" },
+};
+
+const whatsNew0113Translations: Record<AppLanguage, Pick<Dictionary, "whatsNew0113ViewportLayout">> = {
+  sl: { whatsNew0113ViewportLayout: "Izboljšana postavitev aplikacije pri različnih velikostih okna" },
+  en: { whatsNew0113ViewportLayout: "Improved the app layout at different window sizes" },
+  de: { whatsNew0113ViewportLayout: "Verbessertes App-Layout bei verschiedenen Fenstergrößen" },
+  es: { whatsNew0113ViewportLayout: "Diseño de la app mejorado con diferentes tamaños de ventana" },
+  it: { whatsNew0113ViewportLayout: "Layout dell'app migliorato con diverse dimensioni della finestra" },
+  hr: { whatsNew0113ViewportLayout: "Poboljšan raspored aplikacije pri različitim veličinama prozora" },
+  fr: { whatsNew0113ViewportLayout: "Disposition de l'app améliorée pour différentes tailles de fenêtre" },
+  pt: { whatsNew0113ViewportLayout: "Layout da app melhorado em diferentes tamanhos de janela" },
+  nl: { whatsNew0113ViewportLayout: "Verbeterde app-indeling bij verschillende vensterformaten" },
+  pl: { whatsNew0113ViewportLayout: "Ulepszony układ aplikacji przy różnych rozmiarach okna" },
 };
 
 const updaterErrorTranslations: Record<AppLanguage, Partial<Dictionary>> = {
@@ -533,6 +547,7 @@ const slovenianCompletionTranslations: Partial<Dictionary> = {
 for (const language of languages) {
   Object.assign(dictionaries[language.code], whatsNewTranslations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0112Translations[language.code]);
+  Object.assign(dictionaries[language.code], whatsNew0113Translations[language.code]);
   Object.assign(dictionaries[language.code], updaterErrorTranslations[language.code]);
   if (language.code !== "en") Object.assign(dictionaries[language.code], v01ProgressTranslations[language.code], onboardingTranslations[language.code], modelRecoveryTranslations[language.code], reliabilityTranslations[language.code]);
 }
