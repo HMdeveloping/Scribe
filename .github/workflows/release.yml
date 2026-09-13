@@ -416,9 +416,9 @@ jobs:
         run: |
           set -euo pipefail
           cat > release-notes.md <<'EOF'
-          Initial Scribe desktop release.
+          Scribe v0.1.14 improves transcription reliability.
 
-          Scribe v0.1 is an early test release. Your operating system may ask you to confirm the app the first time you open it.
+          This release conservatively reduces obvious repeated-phrase hallucination loops while preserving legitimate repetition, such as natural repeated words. It also includes stability and reliability improvements.
           EOF
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release edit "$TAG_NAME" --title "Scribe $TAG_NAME" --notes-file release-notes.md
@@ -521,7 +521,7 @@ jobs:
 
           jq -n \
             --arg version "$release_version" \
-            --arg notes "Initial Scribe desktop release.\n\nScribe v0.1 is an early test release. Your operating system may ask you to confirm the app the first time you open it." \
+            --arg notes "Scribe v0.1.14 improves transcription reliability.\n\nThis release conservatively reduces obvious repeated-phrase hallucination loops while preserving legitimate repetition, such as natural repeated words. It also includes stability and reliability improvements." \
             --arg pub_date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
             --arg mac_url "https://github.com/${REPOSITORY}/releases/download/${TAG_NAME}/${mac_tar_name}" \
             --arg mac_signature "$mac_signature" \
