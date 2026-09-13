@@ -8,12 +8,13 @@ This is an experimental research harness for comparing local ASR quality on real
 tests/asr-benchmark/
   manifest.json
   audio/
-  references/
+  local-references/
+  adapters/
   results/
   scripts/run-asr-benchmark.mjs
 ```
 
-`audio/` and `results/` are gitignored except for `.gitkeep`. Do not commit private recordings, model files, generated reports, or copied raw ASR output.
+`audio/` and `results/` are gitignored except for `.gitkeep`. Do not commit private recordings, model files, generated reports, or copied raw ASR output. `local-references/` contains intentional human reference fixtures and may be committed when the text is safe to share.
 
 ## Dataset
 
@@ -24,7 +25,7 @@ Each sample in `manifest.json` needs a local audio file and a human-written refe
   "id": "sl-code-switch-001",
   "enabled": true,
   "audio": "audio/sl-code-switch-001.wav",
-  "reference": "references/sl-code-switch-001.txt",
+  "reference": "local-references/sl-code-switch-001.txt",
   "category": "code_switch_sl_en",
   "language": "sl",
   "expectedEnglishTokens": ["feedback", "project"],
@@ -42,6 +43,8 @@ Use these categories:
 - `slang`
 - `technical`
 - `fast_speech`
+- `legitimate_repetition`
+- `pause_test`
 - `noisy`
 - `silence`
 - `long_form`
@@ -83,9 +86,9 @@ npm run benchmark:asr
 The manifest includes:
 
 - Whisper Large v3 Turbo, current production-style no prompt
-- Whisper Large v3 Turbo with the minimal prompt
+- Whisper Large v3 Turbo with the minimal prompt, disabled by default after benchmark rejection
 - Whisper Large v3, current production-style no prompt
-- Whisper Large v3 with the minimal prompt
+- Whisper Large v3 with the minimal prompt, disabled by default after benchmark rejection
 
 The prompt experiment is intentionally tiny:
 
@@ -101,11 +104,15 @@ NVIDIA Parakeet TDT 0.6B v3 is listed as a benchmark candidate, not as productio
 
 Local benchmark execution should start with the smallest separate Python/NeMo or Transformers experiment that can emit JSON for this harness. Keep the dependency tree outside Scribe production. Record whether inference used CPU, Metal/MPS, CoreML, MLX, ONNX, or another backend, whether it stayed local after model download, model size, runtime, memory, timestamp availability, and Windows x64 feasibility.
 
+The final Scribe 1.0 benchmark measured Parakeet TDT 0.6B v3 at 32.3% WER on the local Slovenian suite. It is not a production candidate for Scribe 1.0.
+
 ## Qwen3-ASR Investigation
 
 Qwen3-ASR 0.6B is listed as a benchmark candidate, not as production integration. The Hugging Face repository lists Apache-2.0 licensing and a roughly 1.88 GB model file. Before running locally, confirm language/code-switch behavior, local/offline support, timestamp capability, Apple Silicon feasibility, Windows feasibility, RAM, speed, and dependency burden.
 
 If local execution is impractical, mark it skipped with the exact reason in the benchmark report instead of forcing a large infrastructure project.
+
+The tested local Qwen3-ASR 0.6B package does not support Slovenian. It was skipped in the final Scribe 1.0 benchmark and is not a production candidate for Scribe 1.0.
 
 ## External Engine Adapters
 
@@ -135,6 +142,14 @@ They should write raw JSON with at least:
 ```
 
 Keep wrappers outside Scribe production. They may use a separate Python virtual environment or local runtime as long as the generated output JSON is local and reproducible.
+
+This repository includes benchmark-only helper adapters in `tests/asr-benchmark/adapters/` for the tested local Parakeet and Qwen runtimes. They are not used by Scribe production code.
+
+Adapter-local runtime paths may be overridden with:
+
+- `SCRIBE_ASR_NEMO_SPEECH_BIN`
+- `SCRIBE_ASR_PARAKEET_MODEL`
+- `SCRIBE_ASR_QWEN3_MODEL`
 
 ## Metrics
 
@@ -173,9 +188,22 @@ Do not recommend a new default model because of a tiny total-WER improvement. We
 
 If Whisper with the minimal prompt is the best trade-off, say so. If current Whisper remains best, say so. If Parakeet wins accuracy but has high integration cost, report those separately.
 
+## Final Scribe 1.0 Result
+
+The accepted final Slovenian ASR benchmark conclusion is:
+
+- Whisper Large v3 Turbo, no prompt: 15.5% WER.
+- Whisper Large v3, no prompt: 9.8% WER.
+- Parakeet TDT 0.6B v3: 32.3% WER.
+- Qwen3-ASR 0.6B: unsupported for Slovenian in the tested local package.
+
+Prompted Whisper Large v3 Turbo was previously rejected because WER worsened substantially. The production Whisper decoding arguments should not be changed from this benchmark.
+
+Whisper Large v3 is the best-quality Slovenian model found by this benchmark and is the Scribe 1.0 quality baseline. Whisper Large v3 Turbo remains the faster practical alternative. Parakeet TDT 0.6B v3 and Qwen3-ASR 0.6B are not production candidates for Scribe 1.0.
+
 ## Privacy
 
-Private benchmark audio remains local in `tests/asr-benchmark/audio/`. Generated outputs remain local in `tests/asr-benchmark/results/`. Both paths are ignored by git. The runner writes references to relative paths and must not copy files from Scribe's real app data directory.
+Private benchmark audio remains local in `tests/asr-benchmark/audio/`. Generated outputs remain local in `tests/asr-benchmark/results/`. Both paths are ignored by git. Human reference fixtures live in `tests/asr-benchmark/local-references/`. The runner writes references to relative paths and must not copy files from Scribe's real app data directory.
 
 ## First Real Benchmark Step
 
@@ -187,4 +215,4 @@ Record or collect at least 3 to 5 human-reference samples for each priority cate
 - technical English words in Slovenian sentences
 - speech followed by silence
 
-Place audio in `tests/asr-benchmark/audio/`, write exact human transcripts in `tests/asr-benchmark/references/`, set `enabled: true`, configure local model paths through environment variables, then run `npm run benchmark:asr`.
+Place audio in `tests/asr-benchmark/audio/`, write exact human transcripts in `tests/asr-benchmark/local-references/`, set `enabled: true`, configure local model paths through environment variables, then run `npm run benchmark:asr`.

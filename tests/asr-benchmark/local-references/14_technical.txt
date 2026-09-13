@@ -1,0 +1,1 @@
+Uporabljamo lokalni model za transkripcijo in podatki ostanejo na napravi.

@@ -1,101 +1,33 @@
 {
   "version": 1,
-  "description": "Local experimental ASR benchmark manifest for Scribe. Private audio stays out of git.",
+  "description": "Local experimental ASR benchmark manifest for Scribe. Private audio and local references stay out of git.",
   "samples": [
-    {
-      "id": "sl-code-switch-001",
-      "enabled": false,
-      "audio": "audio/sl-code-switch-001.wav",
-      "reference": "references/sl-code-switch-001.txt",
-      "category": "code_switch_sl_en",
-      "language": "sl",
-      "expectedEnglishTokens": ["feedback", "project"],
-      "notes": "Example format only. Add a private local recording that exactly matches the reference before enabling."
-    },
-    {
-      "id": "sl-colloquial-001",
-      "enabled": false,
-      "audio": "audio/sl-colloquial-001.wav",
-      "reference": "references/sl-colloquial-001.txt",
-      "category": "colloquial",
-      "language": "sl",
-      "expectedEnglishTokens": ["random"],
-      "notes": "Informal Slovenian with an English adjective. Disabled until matching local audio exists."
-    },
-    {
-      "id": "sl-silence-001",
-      "enabled": false,
-      "audio": "audio/sl-silence-001.wav",
-      "reference": "references/sl-silence-001.txt",
-      "category": "silence",
-      "language": "sl",
-      "expectedEnglishTokens": [],
-      "notes": "Short speech followed by silence/end-of-recording silence. Disabled until matching local audio exists."
-    }
+    { "id": "01-clean-sl", "enabled": true, "audio": "audio/01_clean_sl.m4a", "reference": "local-references/01_clean_sl.txt", "category": "clean_slovenian", "language": "sl", "expectedEnglishTokens": [], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "02-clean-sl", "enabled": true, "audio": "audio/02_clean_sl.m4a", "reference": "local-references/02_clean_sl.txt", "category": "clean_slovenian", "language": "sl", "expectedEnglishTokens": [], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "03-clean-sl", "enabled": true, "audio": "audio/03_clean_sl.m4a", "reference": "local-references/03_clean_sl.txt", "category": "clean_slovenian", "language": "sl", "expectedEnglishTokens": [], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "04-code-switch", "enabled": true, "audio": "audio/04_code_switch.m4a", "reference": "local-references/04_code_switch.txt", "category": "code_switch_sl_en", "language": "sl", "expectedEnglishTokens": ["feedback", "project"], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "05-code-switch", "enabled": true, "audio": "audio/05_code_switch.m4a", "reference": "local-references/05_code_switch.txt", "category": "code_switch_sl_en", "language": "sl", "expectedEnglishTokens": ["Commit", "pushal", "GitHub", "build"], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "06-code-switch", "enabled": true, "audio": "audio/06_code_switch.m4a", "reference": "local-references/06_code_switch.txt", "category": "code_switch_sl_en", "language": "sl", "expectedEnglishTokens": ["feature", "user", "experience"], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "07-code-switch", "enabled": true, "audio": "audio/07_code_switch.m4a", "reference": "local-references/07_code_switch.txt", "category": "code_switch_sl_en", "language": "sl", "expectedEnglishTokens": ["Deadline", "testing"], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "08-colloquial", "enabled": true, "audio": "audio/08_colloquial.m4a", "reference": "local-references/08_colloquial.txt", "category": "colloquial", "language": "sl", "expectedEnglishTokens": ["simple"], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "09-colloquial", "enabled": true, "audio": "audio/09_colloquial.m4a", "reference": "local-references/09_colloquial.txt", "category": "colloquial", "language": "sl", "expectedEnglishTokens": [], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "10-colloquial", "enabled": true, "audio": "audio/10_colloquial.m4a", "reference": "local-references/10_colloquial.txt", "category": "colloquial", "language": "sl", "expectedEnglishTokens": ["random"], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "11-colloquial", "enabled": true, "audio": "audio/11_colloquial.m4a", "reference": "local-references/11_colloquial.txt", "category": "colloquial", "language": "sl", "expectedEnglishTokens": [], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "12-slang-technical", "enabled": true, "audio": "audio/12_slang_technical.m4a", "reference": "local-references/12_slang_technical.txt", "category": "slang", "language": "sl", "expectedEnglishTokens": ["scrollal"], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "13-slang-technical", "enabled": true, "audio": "audio/13_slang_technical.m4a", "reference": "local-references/13_slang_technical.txt", "category": "technical", "language": "sl", "expectedEnglishTokens": ["deployal", "config", "file"], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "14-technical", "enabled": true, "audio": "audio/14_technical.m4a", "reference": "local-references/14_technical.txt", "category": "technical", "language": "sl", "expectedEnglishTokens": [], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "15-fast-speech", "enabled": true, "audio": "audio/15_fast_speech.m4a", "reference": "local-references/15_fast_speech.txt", "category": "fast_speech", "language": "sl", "expectedEnglishTokens": [], "notes": "Intended script reference; user should correct if actual spoken wording differs." },
+    { "id": "16-repetition-legit", "enabled": true, "audio": "audio/16_repetition_legit.m4a", "reference": "local-references/16_repetition_legit.txt", "category": "legitimate_repetition", "language": "sl", "expectedEnglishTokens": [], "notes": "Legitimate repeated words; intended script reference should be corrected if actual wording differs." },
+    { "id": "17-pause-test", "enabled": true, "audio": "audio/17_pause_test.m4a", "reference": "local-references/17_pause_test.txt", "category": "pause_test", "language": "sl", "expectedEnglishTokens": [], "notes": "Reference intentionally omits the silence marker; correct if actual spoken wording differs." },
+    { "id": "18-silence-end", "enabled": true, "audio": "audio/18_silence_end.m4a", "reference": "local-references/18_silence_end.txt", "category": "silence", "language": "sl", "expectedEnglishTokens": [], "notes": "Reference intentionally omits end silence; correct if actual spoken wording differs." }
   ],
-  "requiredCategories": [
-    "clean_slovenian",
-    "code_switch_sl_en",
-    "colloquial",
-    "slang",
-    "technical",
-    "fast_speech",
-    "noisy",
-    "silence",
-    "long_form"
-  ],
+  "requiredCategories": ["clean_slovenian", "code_switch_sl_en", "colloquial", "slang", "technical", "fast_speech", "legitimate_repetition", "pause_test", "silence", "noisy", "long_form"],
   "candidates": [
-    {
-      "id": "whisper-large-v3-turbo",
-      "label": "Whisper Large v3 Turbo",
-      "type": "whisper",
-      "enabled": true,
-      "modelPathEnv": "SCRIBE_ASR_WHISPER_TURBO_MODEL",
-      "prompt": null,
-      "backend": "whisper.cpp local CLI"
-    },
-    {
-      "id": "whisper-large-v3-turbo-prompt",
-      "label": "Whisper Large v3 Turbo + prompt",
-      "type": "whisper",
-      "enabled": true,
-      "modelPathEnv": "SCRIBE_ASR_WHISPER_TURBO_MODEL",
-      "prompt": "Slovenian speech with occasional English words and informal expressions.",
-      "backend": "whisper.cpp local CLI"
-    },
-    {
-      "id": "whisper-large-v3",
-      "label": "Whisper Large v3",
-      "type": "whisper",
-      "enabled": true,
-      "modelPathEnv": "SCRIBE_ASR_WHISPER_LARGE_V3_MODEL",
-      "prompt": null,
-      "backend": "whisper.cpp local CLI"
-    },
-    {
-      "id": "whisper-large-v3-prompt",
-      "label": "Whisper Large v3 + prompt",
-      "type": "whisper",
-      "enabled": true,
-      "modelPathEnv": "SCRIBE_ASR_WHISPER_LARGE_V3_MODEL",
-      "prompt": "Slovenian speech with occasional English words and informal expressions.",
-      "backend": "whisper.cpp local CLI"
-    },
-    {
-      "id": "parakeet-tdt-0.6b-v3",
-      "label": "Parakeet TDT 0.6B v3",
-      "type": "external-jsonl",
-      "enabled": true,
-      "commandEnv": "SCRIBE_ASR_PARAKEET_CMD",
-      "backend": "user-provided benchmark command"
-    },
-    {
-      "id": "qwen3-asr-0.6b",
-      "label": "Qwen3-ASR 0.6B",
-      "type": "external-jsonl",
-      "enabled": true,
-      "commandEnv": "SCRIBE_ASR_QWEN3_ASR_CMD",
-      "backend": "user-provided benchmark command"
-    }
+    { "id": "whisper-large-v3-turbo", "label": "Whisper Large v3 Turbo", "type": "whisper", "enabled": true, "modelPathEnv": "SCRIBE_ASR_WHISPER_TURBO_MODEL", "prompt": null, "backend": "whisper.cpp local CLI" },
+    { "id": "whisper-large-v3-turbo-prompt", "label": "Whisper Large v3 Turbo + prompt", "type": "whisper", "enabled": false, "modelPathEnv": "SCRIBE_ASR_WHISPER_TURBO_MODEL", "prompt": "Slovenian speech with occasional English words and informal expressions.", "backend": "whisper.cpp local CLI" },
+    { "id": "whisper-large-v3", "label": "Whisper Large v3", "type": "whisper", "enabled": true, "modelPathEnv": "SCRIBE_ASR_WHISPER_LARGE_V3_MODEL", "prompt": null, "backend": "whisper.cpp local CLI" },
+    { "id": "whisper-large-v3-prompt", "label": "Whisper Large v3 + prompt", "type": "whisper", "enabled": false, "modelPathEnv": "SCRIBE_ASR_WHISPER_LARGE_V3_MODEL", "prompt": "Slovenian speech with occasional English words and informal expressions.", "backend": "whisper.cpp local CLI" },
+    { "id": "parakeet-tdt-0.6b-v3", "label": "Parakeet TDT 0.6B v3", "type": "external-jsonl", "enabled": true, "commandEnv": "SCRIBE_ASR_PARAKEET_CMD", "backend": "user-provided benchmark command" },
+    { "id": "qwen3-asr-0.6b", "label": "Qwen3-ASR 0.6B", "type": "external-jsonl", "enabled": true, "commandEnv": "SCRIBE_ASR_QWEN3_ASR_CMD", "backend": "user-provided benchmark command" }
   ]
 }

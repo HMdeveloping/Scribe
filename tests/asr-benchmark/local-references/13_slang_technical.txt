@@ -1,0 +1,1 @@
+Ko sem deployal aplikacijo, sem ugotovil, da sem pozabil en config file.

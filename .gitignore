@@ -60,6 +60,8 @@ tests/asr-benchmark/audio/*
 !tests/asr-benchmark/audio/.gitkeep
 tests/asr-benchmark/results/*
 !tests/asr-benchmark/results/.gitkeep
+tests/asr-benchmark/adapters/__pycache__/
+tests/asr-benchmark/adapters/*.pyc
 
 # Keep checked-in Tauri icon assets visible despite binary ignores.
 !src-tauri/icons/*.ico

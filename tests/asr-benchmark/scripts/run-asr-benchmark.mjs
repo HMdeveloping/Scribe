@@ -20,6 +20,8 @@ const supportedCategories = new Set([
   "noisy",
   "silence",
   "long_form",
+  "legitimate_repetition",
+  "pause_test",
 ]);
 
 function resolveBenchmarkPath(relativePath) {
@@ -219,6 +221,22 @@ function scribePostProcess(raw) {
   };
 }
 
+function transcriptOutputFromRaw(raw) {
+  const segments = Array.isArray(raw.segments)
+    ? raw.segments
+    : Array.isArray(raw.transcription)
+      ? raw.transcription.map((segment) => ({
+          start: Number.isFinite(segment.start) ? segment.start : (segment.offsets?.from ?? 0) / 1000,
+          end: Number.isFinite(segment.end) ? segment.end : (segment.offsets?.to ?? 0) / 1000,
+          text: segment.text ?? "",
+        }))
+      : [];
+  return {
+    text: raw.text || segments.map((segment) => segment.text ?? "").join(" ").trim(),
+    segments,
+  };
+}
+
 function metricsFor(reference, output, sample, runtimeSeconds, audioSeconds, modelSizeBytes) {
   const text = output.text ?? "";
   return {
@@ -327,6 +345,36 @@ async function audioDurationSeconds(audioPath) {
   }
 }
 
+function whisperCanRead(audioPath) {
+  return new Set([".flac", ".mp3", ".ogg", ".wav"]).has(path.extname(audioPath).toLowerCase());
+}
+
+async function whisperAudioPath(sample, dirs) {
+  const audioPath = resolveBenchmarkPath(sample.audio);
+  if (whisperCanRead(audioPath)) return audioPath;
+  const derivedPath = path.join(dirs.derived, `${sample.id}.wav`);
+  if (existsSync(derivedPath)) return derivedPath;
+  await mkdir(dirs.derived, { recursive: true });
+  await runCommand(process.env.SCRIBE_ASR_FFMPEG || "ffmpeg", [
+    "-y",
+    "-i",
+    audioPath,
+    "-map",
+    "0:a:0",
+    "-vn",
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    "-c:a",
+    "pcm_s16le",
+    "-sample_fmt",
+    "s16",
+    derivedPath,
+  ]);
+  return derivedPath;
+}
+
 async function runWhisperCandidate(candidate, sample, reference, dirs, whisper) {
   const modelPath = process.env[candidate.modelPathEnv];
   if (!modelPath) {
@@ -338,7 +386,8 @@ async function runWhisperCandidate(candidate, sample, reference, dirs, whisper) 
   if (candidate.prompt && !whisper.supportsPrompt) {
     return { skipped: true, reason: "bundled whisper-cli does not support --prompt" };
   }
-  const audioPath = resolveBenchmarkPath(sample.audio);
+  const originalAudioPath = resolveBenchmarkPath(sample.audio);
+  const audioPath = await whisperAudioPath(sample, dirs);
   const outputPrefix = path.join(dirs.raw, `${sample.id}-${candidate.id}`);
   const args = [
     "-m",
@@ -352,21 +401,29 @@ async function runWhisperCandidate(candidate, sample, reference, dirs, whisper) 
     outputPrefix,
   ];
   if (candidate.prompt) args.push("--prompt", candidate.prompt);
-  const audioSeconds = await audioDurationSeconds(audioPath);
-  const run = await runCommand(whisper.path, args);
+  const audioSeconds = await audioDurationSeconds(originalAudioPath);
+  let run;
+  let backendUsed = candidate.backend;
+  try {
+    run = await runCommand(whisper.path, args);
+  } catch (error) {
+    const cpuArgs = ["-ng", ...args];
+    run = await runCommand(whisper.path, cpuArgs);
+    backendUsed = `${candidate.backend} (CPU fallback after GPU/Metal failure: ${error.message.split("\n")[0]})`;
+  }
   const rawJsonPath = `${outputPrefix}.json`;
+  if (!existsSync(rawJsonPath)) {
+    throw new Error(`whisper-cli completed but did not produce expected JSON: ${rawJsonPath}`);
+  }
   const raw = await readJson(rawJsonPath);
-  const output = {
-    text: raw.text || (raw.segments ?? []).map((segment) => segment.text ?? "").join(" ").trim(),
-    segments: raw.segments ?? [],
-  };
+  const output = transcriptOutputFromRaw(raw);
   const postProcessed = scribePostProcess(output);
   return {
     skipped: false,
     rawOutputPath: path.relative(benchmarkRoot, rawJsonPath),
     prompt: candidate.prompt ?? null,
-    appleSiliconRuntime: process.platform === "darwin" && process.arch === "arm64" ? "whisper.cpp local CLI on Apple Silicon" : null,
-    backend: candidate.backend,
+    appleSiliconRuntime: process.platform === "darwin" && process.arch === "arm64" ? backendUsed : null,
+    backend: backendUsed,
     modelSizeBytes: await fileSize(modelPath),
     rawMetrics: metricsFor(reference, output, sample, run.runtimeSeconds, audioSeconds, await fileSize(modelPath)),
     scribePostProcessedMetrics: metricsFor(reference, postProcessed, sample, run.runtimeSeconds, audioSeconds, await fileSize(modelPath)),
@@ -396,10 +453,7 @@ async function runExternalCandidate(candidate, sample, reference, dirs) {
   ]);
   const runtimeSeconds = Number(process.hrtime.bigint() - started) / 1_000_000_000;
   const raw = await readJson(outputPath);
-  const output = {
-    text: raw.text || (raw.segments ?? []).map((segment) => segment.text ?? "").join(" ").trim(),
-    segments: raw.segments ?? [],
-  };
+  const output = transcriptOutputFromRaw(raw);
   const postProcessed = scribePostProcess(output);
   return {
     skipped: false,
@@ -450,7 +504,75 @@ function summarize(results) {
   }));
 }
 
-function buildReport({ manifest, results, skipped, summary, startedAt, whisper }) {
+function summarizeByCategory(results) {
+  const byCategory = new Map();
+  for (const result of results.filter((item) => !item.skipped)) {
+    const key = `${result.category}:${result.engineId}`;
+    const bucket = byCategory.get(key) ?? {
+      category: result.category,
+      engineId: result.engineId,
+      label: result.label,
+      normalizedWer: [],
+      cer: [],
+      codeCorrect: 0,
+      codeExpected: 0,
+      hallucinations: 0,
+      duplicatedSegments: 0,
+      rtf: [],
+    };
+    bucket.normalizedWer.push(result.rawMetrics.normalizedWer);
+    bucket.cer.push(result.rawMetrics.cer);
+    bucket.codeCorrect += result.rawMetrics.codeSwitch.correct;
+    bucket.codeExpected += result.rawMetrics.codeSwitch.expected;
+    bucket.hallucinations += result.rawMetrics.hallucinatedRepeatedPhraseCount;
+    bucket.duplicatedSegments += result.rawMetrics.duplicatedSegmentCount;
+    if (result.rawMetrics.realTimeFactor !== null) bucket.rtf.push(result.rawMetrics.realTimeFactor);
+    byCategory.set(key, bucket);
+  }
+  return [...byCategory.values()].map((bucket) => ({
+    ...bucket,
+    normalizedWer: bucket.normalizedWer.reduce((sum, value) => sum + value, 0) / bucket.normalizedWer.length,
+    cer: bucket.cer.reduce((sum, value) => sum + value, 0) / bucket.cer.length,
+    codeSwitchAccuracy: bucket.codeExpected === 0 ? null : bucket.codeCorrect / bucket.codeExpected,
+    realTimeFactor: bucket.rtf.length ? bucket.rtf.reduce((sum, value) => sum + value, 0) / bucket.rtf.length : null,
+  }));
+}
+
+function summarizePromptPairs(summary) {
+  const byId = new Map(summary.map((row) => [row.engineId, row]));
+  const pairs = [
+    ["whisper-large-v3-turbo", "whisper-large-v3-turbo-prompt", "Whisper Large v3 Turbo"],
+    ["whisper-large-v3", "whisper-large-v3-prompt", "Whisper Large v3"],
+  ];
+  return pairs.map(([baseId, promptId, label]) => {
+    const base = byId.get(baseId);
+    const prompted = byId.get(promptId);
+    return {
+      label,
+      baseEngineId: baseId,
+      promptEngineId: promptId,
+      available: Boolean(base && prompted),
+      normalizedWerDelta: base && prompted ? prompted.normalizedWer - base.normalizedWer : null,
+      codeSwitchAccuracyDelta:
+        base?.codeSwitchAccuracy !== null &&
+        base?.codeSwitchAccuracy !== undefined &&
+        prompted?.codeSwitchAccuracy !== null &&
+        prompted?.codeSwitchAccuracy !== undefined
+          ? prompted.codeSwitchAccuracy - base.codeSwitchAccuracy
+          : null,
+      hallucinationDelta: base && prompted ? prompted.hallucinations - base.hallucinations : null,
+      rtfDelta:
+        base?.realTimeFactor !== null &&
+        base?.realTimeFactor !== undefined &&
+        prompted?.realTimeFactor !== null &&
+        prompted?.realTimeFactor !== undefined
+          ? prompted.realTimeFactor - base.realTimeFactor
+          : null,
+    };
+  });
+}
+
+function buildReport({ manifest, results, skipped, summary, categorySummary, promptSummary, startedAt, whisper }) {
   const lines = [
     "# Scribe ASR Benchmark Report",
     "",
@@ -469,6 +591,26 @@ function buildReport({ manifest, results, skipped, summary, startedAt, whisper }
   } else {
     for (const row of summary) {
       lines.push(`| ${row.label} | ${formatPercent(row.normalizedWer)} | ${formatPercent(row.codeSwitchAccuracy)} | ${row.hallucinations} | ${formatNumber(row.realTimeFactor)} | n/a |`);
+    }
+  }
+  lines.push("", "## Category Breakdown", "");
+  if (categorySummary.length === 0) {
+    lines.push("No executed samples.");
+  } else {
+    lines.push("| Category | Engine | Normalized WER | CER | Code-switch accuracy | Repeated phrases | Duplicated segments | RTF |");
+    lines.push("|----------|--------|----------------|-----|----------------------|------------------|---------------------|-----|");
+    for (const row of categorySummary) {
+      lines.push(`| ${row.category} | ${row.label} | ${formatPercent(row.normalizedWer)} | ${formatPercent(row.cer)} | ${formatPercent(row.codeSwitchAccuracy)} | ${row.hallucinations} | ${row.duplicatedSegments} | ${formatNumber(row.realTimeFactor)} |`);
+    }
+  }
+  lines.push("", "## Prompt Comparison", "");
+  lines.push("| Pair | WER delta | Code-switch delta | Repeated phrase delta | RTF delta |");
+  lines.push("|------|-----------|-------------------|-----------------------|-----------|");
+  for (const row of promptSummary) {
+    if (!row.available) {
+      lines.push(`| ${row.label} | n/a | n/a | n/a | n/a |`);
+    } else {
+      lines.push(`| ${row.label} | ${formatPercent(row.normalizedWerDelta)} | ${formatPercent(row.codeSwitchAccuracyDelta)} | ${row.hallucinationDelta} | ${formatNumber(row.rtfDelta)} |`);
     }
   }
   lines.push("", "## Skipped Engines", "");
@@ -513,11 +655,24 @@ async function main() {
     }
     for (const sample of enabledSamples) {
       const reference = (await readFile(resolveBenchmarkPath(sample.reference), "utf8")).trim();
-      const dirs = { raw: path.join(latestDir, "raw") };
-      const result =
-        candidate.type === "whisper"
-          ? await runWhisperCandidate(candidate, sample, reference, dirs, whisper)
-          : await runExternalCandidate(candidate, sample, reference, dirs);
+      const dirs = { raw: path.join(latestDir, "raw"), derived: path.join(latestDir, "derived") };
+      let result;
+      try {
+        result =
+          candidate.type === "whisper"
+            ? await runWhisperCandidate(candidate, sample, reference, dirs, whisper)
+            : await runExternalCandidate(candidate, sample, reference, dirs);
+      } catch (error) {
+        const messageLines = error.message.split("\n").map((line) => line.trim()).filter(Boolean);
+        const reason =
+          messageLines.find((line) => line.includes("does not support Slovenian")) ||
+          messageLines[0] ||
+          String(error);
+        result = {
+          skipped: true,
+          reason,
+        };
+      }
       if (result.skipped) {
         skipped.push({ engineId: candidate.id, label: candidate.label, sampleId: sample.id, reason: result.reason });
       } else {
@@ -552,6 +707,8 @@ async function main() {
   }
 
   const summary = summarize(results);
+  const categorySummary = summarizeByCategory(results);
+  const promptSummary = summarizePromptPairs(summary);
   const output = {
     startedAt,
     host: { platform: process.platform, arch: process.arch, release: os.release() },
@@ -567,6 +724,8 @@ async function main() {
     results,
     skipped,
     summary,
+    categorySummary,
+    promptSummary,
     selfTest: {
       rawNormalizedWer: normalizedWer(selfTestReference, selfTestRaw.text),
       postProcessedNormalizedWer: normalizedWer(selfTestReference, selfTestPostProcessed.text),
@@ -575,7 +734,7 @@ async function main() {
   };
 
   await writeJson(path.join(latestDir, "results.json"), output);
-  await writeFile(path.join(latestDir, "report.md"), buildReport({ manifest, results, skipped, summary, startedAt, whisper }));
+  await writeFile(path.join(latestDir, "report.md"), buildReport({ manifest, results, skipped, summary, categorySummary, promptSummary, startedAt, whisper }));
   await copyFile(manifestPath, path.join(latestDir, "manifest.snapshot.json"));
 
   console.log("ASR BENCHMARK HARNESS PASS");
