@@ -2717,15 +2717,25 @@ button {
 }
 
 .follow-transcript-slot {
-  min-height: 56px;
+  --transcript-player-bottom-inset: 28px;
+  --transcript-player-height: 70px;
+  --transcript-follow-gap: 14px;
+  min-height: 46px;
   display: flex;
   align-items: center;
   justify-content: center;
+  position: sticky;
+  bottom: calc(
+    var(--transcript-player-bottom-inset) + var(--transcript-player-height) +
+      var(--transcript-follow-gap)
+  );
+  z-index: 6;
+  pointer-events: none;
 }
 
 .follow-transcript-btn {
   align-self: center;
-  margin: 10px auto 14px;
+  margin: 0 auto;
   padding: 8px 16px;
   border: 1px solid var(--border);
   border-radius: 20px;
@@ -2736,6 +2746,7 @@ button {
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(73, 103, 242, 0.08);
   transition: background 120ms ease, box-shadow 120ms ease;
+  pointer-events: auto;
 }
 
 .follow-transcript-btn:hover {
