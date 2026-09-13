@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "description": "Local experimental ASR benchmark manifest for Scribe. Private audio stays out of git.",
+  "samples": [
+    {
+      "id": "sl-code-switch-001",
+      "enabled": false,
+      "audio": "audio/sl-code-switch-001.wav",
+      "reference": "references/sl-code-switch-001.txt",
+      "category": "code_switch_sl_en",
+      "language": "sl",
+      "expectedEnglishTokens": ["feedback", "project"],
+      "notes": "Example format only. Add a private local recording that exactly matches the reference before enabling."
+    },
+    {
+      "id": "sl-colloquial-001",
+      "enabled": false,
+      "audio": "audio/sl-colloquial-001.wav",
+      "reference": "references/sl-colloquial-001.txt",
+      "category": "colloquial",
+      "language": "sl",
+      "expectedEnglishTokens": ["random"],
+      "notes": "Informal Slovenian with an English adjective. Disabled until matching local audio exists."
+    },
+    {
+      "id": "sl-silence-001",
+      "enabled": false,
+      "audio": "audio/sl-silence-001.wav",
+      "reference": "references/sl-silence-001.txt",
+      "category": "silence",
+      "language": "sl",
+      "expectedEnglishTokens": [],
+      "notes": "Short speech followed by silence/end-of-recording silence. Disabled until matching local audio exists."
+    }
+  ],
+  "requiredCategories": [
+    "clean_slovenian",
+    "code_switch_sl_en",
+    "colloquial",
+    "slang",
+    "technical",
+    "fast_speech",
+    "noisy",
+    "silence",
+    "long_form"
+  ],
+  "candidates": [
+    {
+      "id": "whisper-large-v3-turbo",
+      "label": "Whisper Large v3 Turbo",
+      "type": "whisper",
+      "enabled": true,
+      "modelPathEnv": "SCRIBE_ASR_WHISPER_TURBO_MODEL",
+      "prompt": null,
+      "backend": "whisper.cpp local CLI"
+    },
+    {
+      "id": "whisper-large-v3-turbo-prompt",
+      "label": "Whisper Large v3 Turbo + prompt",
+      "type": "whisper",
+      "enabled": true,
+      "modelPathEnv": "SCRIBE_ASR_WHISPER_TURBO_MODEL",
+      "prompt": "Slovenian speech with occasional English words and informal expressions.",
+      "backend": "whisper.cpp local CLI"
+    },
+    {
+      "id": "whisper-large-v3",
+      "label": "Whisper Large v3",
+      "type": "whisper",
+      "enabled": true,
+      "modelPathEnv": "SCRIBE_ASR_WHISPER_LARGE_V3_MODEL",
+      "prompt": null,
+      "backend": "whisper.cpp local CLI"
+    },
+    {
+      "id": "whisper-large-v3-prompt",
+      "label": "Whisper Large v3 + prompt",
+      "type": "whisper",
+      "enabled": true,
+      "modelPathEnv": "SCRIBE_ASR_WHISPER_LARGE_V3_MODEL",
+      "prompt": "Slovenian speech with occasional English words and informal expressions.",
+      "backend": "whisper.cpp local CLI"
+    },
+    {
+      "id": "parakeet-tdt-0.6b-v3",
+      "label": "Parakeet TDT 0.6B v3",
+      "type": "external-jsonl",
+      "enabled": true,
+      "commandEnv": "SCRIBE_ASR_PARAKEET_CMD",
+      "backend": "user-provided benchmark command"
+    },
+    {
+      "id": "qwen3-asr-0.6b",
+      "label": "Qwen3-ASR 0.6B",
+      "type": "external-jsonl",
+      "enabled": true,
+      "commandEnv": "SCRIBE_ASR_QWEN3_ASR_CMD",
+      "backend": "user-provided benchmark command"
+    }
+  ]
+}

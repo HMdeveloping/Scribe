@@ -55,6 +55,12 @@ temp/
 *.sqlite3
 src-tauri/resources/bin/*/
 
+# Local ASR benchmark data and generated reports.
+tests/asr-benchmark/audio/*
+!tests/asr-benchmark/audio/.gitkeep
+tests/asr-benchmark/results/*
+!tests/asr-benchmark/results/.gitkeep
+
 # Keep checked-in Tauri icon assets visible despite binary ignores.
 !src-tauri/icons/*.ico
 !src-tauri/icons/*.icns
