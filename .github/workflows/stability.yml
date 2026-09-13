@@ -1,0 +1,86 @@
+name: Scribe Stability Harness
+
+on:
+  workflow_dispatch:
+    inputs:
+      soak_iterations:
+        description: "Number of soak iterations"
+        required: false
+        default: "25"
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  static-and-unit:
+    name: Static, Build, and Unit
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Audit i18n
+        run: npm run audit:i18n
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Rust format check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Rust unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture
+
+  stability:
+    name: Integration and Soak Stability
+    runs-on: macos-latest
+    timeout-minutes: 35
+    needs: static-and-unit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run stability harness
+        env:
+          SCRIBE_SOAK_ITERATIONS: ${{ github.event.inputs.soak_iterations || '25' }}
+        run: npm run test:stability
+
+      - name: Upload stability artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scribe-stability-artifacts
+          path: |
+            /tmp/scribe-*
+            ${{ runner.temp }}/scribe-*
+          if-no-files-found: ignore

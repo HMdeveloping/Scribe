@@ -2151,6 +2151,189 @@ mod tests {
             other => panic!("unexpected error: {other:?}"),
         }
     }
+
+    #[test]
+    fn parses_empty_transcript_without_panicking() {
+        let (transcript, sanitization) =
+            parse_fixture(br#"{"segments":[]}"#).expect("empty whisper json parses");
+
+        assert_eq!(sanitization, None);
+        assert_eq!(transcript.language, "sl");
+        assert_eq!(transcript.text, "");
+        assert!(transcript.segments.is_empty());
+    }
+
+    #[test]
+    fn preserves_punctuation_and_meaningful_whitespace() {
+        let (transcript, _) = parse_fixture(
+            r#"{"segments":[{"start":0.0,"end":2.0,"text":"  Pozdravljeni, svet!  Kako ste?  ","tokens":[{"text":"Pozdravljeni","start":0.0,"end":0.4},{"text":",","start":0.4,"end":0.45},{"text":" svet","start":0.45,"end":0.8},{"text":"!","start":0.8,"end":0.85},{"text":" Kako","start":0.85,"end":1.2},{"text":" ste","start":1.2,"end":1.6},{"text":"?","start":1.6,"end":1.65}]}]}"#.as_bytes(),
+        )
+        .expect("punctuated whisper json parses");
+
+        assert_eq!(transcript.text, "Pozdravljeni, svet! Kako ste?");
+        let words: Vec<&str> = transcript.segments[0]
+            .words
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect();
+        assert_eq!(words, vec!["Pozdravljeni,", "svet!", "Kako", "ste?"]);
+    }
+
+    #[test]
+    fn parses_large_transcript_fixture() {
+        let mut segments = Vec::new();
+        for index in 0..250 {
+            segments.push(format!(
+                r#"{{"start":{start:.1},"end":{end:.1},"text":"Segment {index} č š ž.","words":[{{"word":"Segment","start":{start:.1},"end":{mid:.1}}},{{"word":" {index}","start":{mid:.1},"end":{end:.1}}}]}}"#,
+                start = index as f64,
+                mid = index as f64 + 0.4,
+                end = index as f64 + 0.8,
+            ));
+        }
+        let fixture = format!(r#"{{"segments":[{}]}}"#, segments.join(","));
+        let (transcript, sanitization) =
+            parse_fixture(fixture.as_bytes()).expect("large whisper json parses");
+
+        assert_eq!(sanitization, None);
+        assert_eq!(transcript.segments.len(), 250);
+        assert!(transcript.text.contains("Segment 0 č š ž."));
+        assert!(transcript.text.contains("Segment 249 č š ž."));
+        assert!(transcript
+            .segments
+            .iter()
+            .all(|segment| !segment.words.is_empty()));
+    }
+
+    #[test]
+    fn import_extensions_titles_and_mime_types_are_stable() {
+        let supported = [
+            (
+                "lecture with spaces.MP3",
+                "lecture with spaces",
+                "audio/mpeg",
+            ),
+            (
+                "zvočni posnetek čšž.m4a",
+                "zvočni posnetek čšž",
+                "audio/mp4",
+            ),
+            ("meeting.wav", "meeting", "audio/wav"),
+            ("clip.webm", "clip", "audio/webm"),
+        ];
+
+        for (file_name, expected_title, expected_mime) in supported {
+            let path = PathBuf::from(file_name);
+            let extension = path.extension().and_then(|value| value.to_str()).unwrap();
+            assert!(is_supported_import_extension(extension));
+            assert_eq!(title_from_path(&path), expected_title);
+            assert_eq!(mime_type_for_extension(extension), expected_mime);
+        }
+
+        assert!(!is_supported_import_extension("txt"));
+        assert!(!is_supported_import_extension(""));
+        assert_eq!(mime_type_for_extension("txt"), "application/octet-stream");
+    }
+
+    #[test]
+    fn model_metadata_is_unique_and_maps_to_expected_files() {
+        let mut ids = HashSet::new();
+        let mut filenames = HashSet::new();
+
+        for model in WHISPER_MODELS {
+            assert!(ids.insert(model.id), "duplicate model id {}", model.id);
+            assert!(
+                filenames.insert(model.filename),
+                "duplicate model filename {}",
+                model.filename
+            );
+            assert!(model.filename.starts_with("ggml-"));
+            assert!(model.filename.ends_with(".bin"));
+            assert!(model.expected_bytes.unwrap_or_default() > 0);
+            assert_eq!(model_definition(model.id).unwrap().filename, model.filename);
+        }
+
+        assert_eq!(
+            model_definition(DEFAULT_WHISPER_MODEL_ID)
+                .expect("default model exists")
+                .filename,
+            "ggml-large-v3-turbo.bin"
+        );
+        assert!(model_definition("not-a-real-model").is_none());
+    }
+
+    #[test]
+    fn recording_index_upsert_preserves_project_on_retry_without_duplicate_rows() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE recordings (
+              id TEXT PRIMARY KEY,
+              project_id TEXT NULL,
+              title TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              duration_seconds REAL NOT NULL,
+              language TEXT NOT NULL,
+              audio_file TEXT NOT NULL,
+              mime_type TEXT NOT NULL,
+              transcript_file TEXT NULL,
+              transcript_status TEXT NOT NULL,
+              recording_dir TEXT NOT NULL,
+              imported_at TEXT NULL,
+              archived_at TEXT NULL
+            );
+            "#,
+        )
+        .expect("create recordings table");
+
+        let metadata = RecordingMetadata {
+            version: 1,
+            id: "12345678-1234-1234-1234-123456789abc".to_string(),
+            title: "Retry Safe".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            imported_at: None,
+            duration_seconds: 12,
+            language: "sl".to_string(),
+            audio_file: "audio.webm".to_string(),
+            mime_type: "audio/webm".to_string(),
+        };
+        let recording_dir = PathBuf::from("/tmp/scribe-test-recording");
+
+        insert_or_update_recording_index(
+            &conn,
+            &metadata,
+            Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            &recording_dir,
+            None,
+            "pending",
+        )
+        .expect("initial index insert");
+        insert_or_update_recording_index(
+            &conn,
+            &metadata,
+            None,
+            &recording_dir,
+            Some("transcript.json"),
+            "ready",
+        )
+        .expect("retry index update");
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM recordings", [], |row| row.get(0))
+            .expect("count recordings");
+        let (project_id, transcript_file, transcript_status): (String, String, String) = conn
+            .query_row(
+                "SELECT project_id, transcript_file, transcript_status FROM recordings WHERE id = ?1",
+                params![metadata.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("read indexed recording");
+
+        assert_eq!(count, 1);
+        assert_eq!(project_id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        assert_eq!(transcript_file, "transcript.json");
+        assert_eq!(transcript_status, "ready");
+    }
 }
 
 #[tauri::command]

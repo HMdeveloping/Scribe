@@ -7,6 +7,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "audit:i18n": "node scripts/audit-i18n.mjs",
+    "test:unit": "cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture",
+    "test:integration": "node tests/stability/integration.mjs",
+    "test:e2e": "node tests/stability/e2e.mjs",
+    "test:soak": "node tests/stability/soak.mjs",
+    "test:stability": "node tests/stability/run-stability.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
