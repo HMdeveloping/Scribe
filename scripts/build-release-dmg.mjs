@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -59,9 +59,10 @@ if (appTarCandidates.length !== 1) {
   throw new Error(`Expected exactly one signed app tarball in ${macosDir}, found ${appTarCandidates.length}`);
 }
 
+await mkdir(dmgDir, { recursive: true });
 const dmgCandidates = await existingFiles(dmgDir, (entry) => entry.endsWith(".dmg"));
 if (dmgCandidates.length > 1) {
-  throw new Error(`Expected at most one Tauri DMG in ${dmgDir}, found ${dmgCandidates.length}`);
+  throw new Error(`Expected at most one existing release DMG in ${dmgDir}, found ${dmgCandidates.length}`);
 }
 
 const tauriConfig = JSON.parse(await readFile(path.join(repoRoot, "src-tauri", "tauri.conf.json"), "utf8"));
