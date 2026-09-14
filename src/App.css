@@ -2685,15 +2685,15 @@ button {
   padding: 32px 0 32px;
 }
 
-.transcript-segment {
+.transcript-paragraph {
   margin: 0;
   color: #202123;
   font-size: 16px;
   line-height: 1.75;
 }
 
-.transcript-segment + .transcript-segment {
-  margin-top: 18px;
+.transcript-paragraph + .transcript-paragraph {
+  margin-top: 20px;
 }
 
 .transcript-word {

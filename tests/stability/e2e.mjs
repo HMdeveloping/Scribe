@@ -19,6 +19,10 @@ for (const view of ["home", "projects", "recordings", "settings", "transcript"])
 assert(workflowSource.includes("handleWordClick"), "word click seek handler is missing");
 assert(workflowSource.includes("resumeFollowing"), "Follow Transcript resume handler is missing");
 assert(workflowSource.includes("suspendedByUser"), "manual transcript scroll suspend state is missing");
+const manualScrollHandler = /const suspendFollowingForManualScroll = useCallback\(\(\) => \{([\s\S]*?)\}, \[\]\);/.exec(workflowSource)?.[1] ?? "";
+assert(manualScrollHandler.includes('setFollowMode("suspendedByUser")'), "manual transcript scroll does not suspend follow");
+assert(!manualScrollHandler.includes("isPlaying"), "manual transcript scroll suspension must work while playback is paused");
+assert(!/const resumeFollowing = useCallback\([\s\S]*?\.play\(/.test(workflowSource), "Follow Transcript must not start playback");
 assert(audioPlayerSource.includes("togglePlayback"), "audio pause/resume path is missing");
 assert(audioPlayerSource.includes("onChange"), "audio seek control path is missing");
 

@@ -260,6 +260,7 @@ const en = {
   whatsNew0113ViewportLayout: "Improved the app layout at different window sizes",
   whatsNew0114RepetitionHallucinations: "Improved prevention of repeated transcript sections",
   whatsNew0115ZeroDurationLoops: "Improved transcription reliability for rare repeated zero-duration phrase loops",
+  whatsNew0116ReliabilityReadability: "Improved transcription reliability for rare duplicate phrase artifacts and made transcripts flow more naturally",
   welcomeToScribe: "Welcome to Scribe",
   onboardingWelcomeCopy: "Record, import, and transcribe audio with a local-first workspace.",
   onboardingRecordImport: "Record or import audio",
@@ -431,6 +432,19 @@ const whatsNew0115Translations: Record<AppLanguage, Pick<Dictionary, "whatsNew01
   pl: { whatsNew0115ZeroDurationLoops: "Poprawiono niezawodność transkrypcji dla rzadkich pętli powtarzanych fraz bez czasu trwania." },
 };
 
+const whatsNew0116Translations: Record<AppLanguage, Pick<Dictionary, "whatsNew0116ReliabilityReadability">> = {
+  sl: { whatsNew0116ReliabilityReadability: "Izboljšana zanesljivost prepisovanja pri redkih podvojenih frazah in naravnejši tok prepisov." },
+  en: { whatsNew0116ReliabilityReadability: "Improved transcription reliability for rare duplicate phrase artifacts and made transcripts flow more naturally." },
+  de: { whatsNew0116ReliabilityReadability: "Verbesserte Transkriptionszuverlässigkeit bei seltenen doppelten Phrasen und natürlicherer Lesefluss." },
+  es: { whatsNew0116ReliabilityReadability: "Fiabilidad de transcripción mejorada para artefactos raros de frases duplicadas y un flujo de lectura más natural." },
+  it: { whatsNew0116ReliabilityReadability: "Affidabilità della trascrizione migliorata per rari artefatti di frasi duplicate e lettura più naturale." },
+  hr: { whatsNew0116ReliabilityReadability: "Poboljšana pouzdanost transkripcije za rijetke udvostručene fraze i prirodniji tok transkripta." },
+  fr: { whatsNew0116ReliabilityReadability: "Fiabilité de transcription améliorée pour de rares phrases dupliquées et lecture plus naturelle des transcriptions." },
+  pt: { whatsNew0116ReliabilityReadability: "Fiabilidade da transcrição melhorada para raros artefactos de frases duplicadas e leitura mais natural." },
+  nl: { whatsNew0116ReliabilityReadability: "Betrouwbaardere transcriptie bij zeldzame dubbele zinsartefacten en natuurlijker lopende transcripties." },
+  pl: { whatsNew0116ReliabilityReadability: "Poprawiono niezawodność transkrypcji przy rzadkich zduplikowanych frazach i bardziej naturalny przepływ tekstu." },
+};
+
 const updaterErrorTranslations: Record<AppLanguage, Partial<Dictionary>> = {
   en: {},
   sl: {
@@ -578,6 +592,7 @@ for (const language of languages) {
   Object.assign(dictionaries[language.code], whatsNew0113Translations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0114Translations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0115Translations[language.code]);
+  Object.assign(dictionaries[language.code], whatsNew0116Translations[language.code]);
   Object.assign(dictionaries[language.code], updaterErrorTranslations[language.code]);
   if (language.code !== "en") Object.assign(dictionaries[language.code], v01ProgressTranslations[language.code], onboardingTranslations[language.code], modelRecoveryTranslations[language.code], reliabilityTranslations[language.code]);
 }

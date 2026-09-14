@@ -1908,6 +1908,23 @@ struct RepetitionFilterSummary {
     candidates: usize,
     removed_segments: usize,
     zero_duration_loops: usize,
+    zero_duration_prefix_loops: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct DecoderLoopCandidate {
+    start_index: usize,
+    end_index: usize,
+    start_time: f64,
+    end_time: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct DecoderLoopRecoverySummary {
+    candidates: usize,
+    attempted: usize,
+    recovered: usize,
+    rejected: usize,
 }
 
 fn normalized_repetition_key(text: &str) -> String {
@@ -1945,6 +1962,41 @@ fn has_zero_duration_boundary_timing(
         && segment.start >= 0.0
         && (segment.end - segment.start).abs() <= TIMING_EPSILON_SECONDS
         && (segment.start - previous.end).abs() <= TIMING_EPSILON_SECONDS
+}
+
+fn has_zero_duration_at_boundary(segment: &TranscriptSegment, boundary: f64) -> bool {
+    const TIMING_EPSILON_SECONDS: f64 = 0.05;
+
+    segment.start.is_finite()
+        && segment.end.is_finite()
+        && boundary.is_finite()
+        && segment.start >= 0.0
+        && (segment.end - segment.start).abs() <= TIMING_EPSILON_SECONDS
+        && (segment.start - boundary).abs() <= TIMING_EPSILON_SECONDS
+}
+
+fn normalized_repetition_word_key(segment: &TranscriptSegment) -> String {
+    let word_text = segment
+        .words
+        .iter()
+        .map(|word| word.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if word_text.trim().is_empty() {
+        normalized_repetition_key(&segment.text)
+    } else {
+        normalized_repetition_key(&word_text)
+    }
+}
+
+fn normalized_text_contains_key(text: &str, key: &str) -> bool {
+    !key.is_empty()
+        && normalized_repetition_key(text)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .windows(key.split_whitespace().count())
+            .any(|window| window.join(" ") == key)
 }
 
 fn looks_like_repetition_loop_run(
@@ -2028,6 +2080,62 @@ fn looks_like_zero_duration_repetition_loop_run(
         .all(|segment| has_zero_duration_boundary_timing(first, segment))
 }
 
+fn zero_duration_prefix_loop_end(segments: &[TranscriptSegment], start: usize) -> Option<usize> {
+    const MIN_ZERO_DURATION_PREFIX_SEGMENTS: usize = 3;
+    const MAX_REPEATED_WORDS: usize = 6;
+    const MAX_REPEATED_CHARS: usize = 60;
+    const MAX_FOLLOWING_SEGMENT_DURATION_SECONDS: f64 = 4.0;
+
+    let first = segments.get(start)?;
+    let boundary = first.start;
+    let key = normalized_repetition_word_key(first);
+    let word_count = key.split_whitespace().count();
+    if word_count == 0
+        || word_count > MAX_REPEATED_WORDS
+        || key.chars().count() > MAX_REPEATED_CHARS
+    {
+        return None;
+    }
+    if !has_zero_duration_at_boundary(first, boundary) {
+        return None;
+    }
+
+    let mut end = start + 1;
+    while let Some(segment) = segments.get(end) {
+        if !has_zero_duration_at_boundary(segment, boundary) {
+            break;
+        }
+        if normalized_repetition_word_key(segment) != key {
+            break;
+        }
+        end += 1;
+    }
+
+    if end - start < MIN_ZERO_DURATION_PREFIX_SEGMENTS {
+        return None;
+    }
+
+    let following = segments.get(end)?;
+    if !has_reliable_segment_timing(following)
+        || following.start < boundary - 0.05
+        || following.end - following.start > MAX_FOLLOWING_SEGMENT_DURATION_SECONDS
+    {
+        return None;
+    }
+
+    if normalized_text_contains_key(&following.text, &key)
+        || normalized_repetition_word_key(following)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .windows(word_count)
+            .any(|window| window.join(" ") == key)
+    {
+        Some(end)
+    } else {
+        None
+    }
+}
+
 fn filter_repetition_loops(
     segments: Vec<TranscriptSegment>,
 ) -> (Vec<TranscriptSegment>, RepetitionFilterSummary) {
@@ -2036,6 +2144,14 @@ fn filter_repetition_loops(
     let mut index = 0;
 
     while index < segments.len() {
+        if let Some(prefix_end) = zero_duration_prefix_loop_end(&segments, index) {
+            summary.candidates += 1;
+            summary.zero_duration_prefix_loops += 1;
+            summary.removed_segments += prefix_end - index;
+            index = prefix_end;
+            continue;
+        }
+
         let key = normalized_repetition_key(&segments[index].text);
         if key.is_empty() {
             filtered.push(segments[index].clone());
@@ -2065,6 +2181,346 @@ fn filter_repetition_loops(
     }
 
     (filtered, summary)
+}
+
+fn normalized_similarity_tokens(text: &str) -> HashSet<String> {
+    normalized_repetition_key(text)
+        .split_whitespace()
+        .map(|token| token.to_string())
+        .collect()
+}
+
+fn lexical_similarity(left: &str, right: &str) -> f64 {
+    let left_tokens = normalized_similarity_tokens(left);
+    let right_tokens = normalized_similarity_tokens(right);
+    if left_tokens.is_empty() || right_tokens.is_empty() {
+        return 0.0;
+    }
+    let intersection = left_tokens
+        .iter()
+        .filter(|token| right_tokens.contains(*token))
+        .count();
+    let union = left_tokens.len() + right_tokens.len() - intersection;
+    if union == 0 {
+        0.0
+    } else {
+        intersection as f64 / union as f64
+    }
+}
+
+fn detect_decoder_loops(segments: &[TranscriptSegment]) -> Vec<DecoderLoopCandidate> {
+    const MIN_LOOP_SEGMENTS: usize = 3;
+    const MIN_REPEATED_WORDS: usize = 12;
+    const MIN_LOOP_DURATION_SECONDS: f64 = 8.0;
+    const MIN_SIMILARITY: f64 = 0.92;
+    const MAX_ADJACENT_GAP_SECONDS: f64 = 1.0;
+
+    let mut candidates = Vec::new();
+    let mut index = 0;
+    while index < segments.len() {
+        let base = &segments[index];
+        let base_words = normalized_repetition_key(&base.text)
+            .split_whitespace()
+            .count();
+        if !has_reliable_segment_timing(base) || base_words < MIN_REPEATED_WORDS {
+            index += 1;
+            continue;
+        }
+
+        let mut end = index + 1;
+        while end < segments.len() {
+            let previous = &segments[end - 1];
+            let segment = &segments[end];
+            if !has_reliable_segment_timing(segment) {
+                let is_embedded_zero_duration_duplicate = segment.start.is_finite()
+                    && segment.end.is_finite()
+                    && (segment.end - segment.start).abs() <= 0.01
+                    && (segment.start - previous.end).abs() <= MAX_ADJACENT_GAP_SECONDS
+                    && lexical_similarity(&base.text, &segment.text) >= MIN_SIMILARITY;
+                if is_embedded_zero_duration_duplicate {
+                    end += 1;
+                    continue;
+                }
+                break;
+            }
+            let gap = segment.start - previous.end;
+            if gap < -0.05 || gap > MAX_ADJACENT_GAP_SECONDS {
+                break;
+            }
+            if lexical_similarity(&base.text, &segment.text) < MIN_SIMILARITY {
+                break;
+            }
+            end += 1;
+        }
+
+        let run_len = end - index;
+        if run_len >= MIN_LOOP_SEGMENTS {
+            let start_time = segments[index].start;
+            let end_time = segments[end - 1].end;
+            if end_time - start_time >= MIN_LOOP_DURATION_SECONDS {
+                candidates.push(DecoderLoopCandidate {
+                    start_index: index,
+                    end_index: end,
+                    start_time,
+                    end_time,
+                });
+                index = end;
+                continue;
+            }
+        }
+
+        index += 1;
+    }
+
+    candidates
+}
+
+fn offset_segments(mut segments: Vec<TranscriptSegment>, offset: f64) -> Vec<TranscriptSegment> {
+    for segment in &mut segments {
+        segment.start += offset;
+        segment.end += offset;
+        for word in &mut segment.words {
+            word.start += offset;
+            word.end += offset;
+        }
+    }
+    segments
+}
+
+fn trim_segments_to_window(
+    segments: Vec<TranscriptSegment>,
+    start: f64,
+    end: f64,
+) -> Vec<TranscriptSegment> {
+    segments
+        .into_iter()
+        .filter(|segment| {
+            has_reliable_segment_timing(segment) && segment.start >= start && segment.end <= end
+        })
+        .collect()
+}
+
+fn segments_have_reliable_monotonic_timing(segments: &[TranscriptSegment]) -> bool {
+    let mut previous_end = 0.0;
+    for (index, segment) in segments.iter().enumerate() {
+        if !has_reliable_segment_timing(segment) {
+            return false;
+        }
+        if index > 0 && segment.start < previous_end - 0.05 {
+            return false;
+        }
+        let mut previous_word_start = segment.start;
+        for word in &segment.words {
+            if !word.start.is_finite()
+                || !word.end.is_finite()
+                || word.start < 0.0
+                || word.end <= word.start
+                || word.start < previous_word_start - 0.05
+            {
+                return false;
+            }
+            previous_word_start = word.start;
+        }
+        previous_end = segment.end;
+    }
+    true
+}
+
+fn splice_recovered_segments(
+    original: &[TranscriptSegment],
+    candidate: &DecoderLoopCandidate,
+    replacement: Vec<TranscriptSegment>,
+) -> Vec<TranscriptSegment> {
+    let mut next = Vec::new();
+    for segment in original {
+        if segment.end <= candidate.start_time || segment.start >= candidate.end_time {
+            next.push(segment.clone());
+        }
+    }
+    next.extend(replacement);
+    next.sort_by(|left, right| {
+        left.start
+            .partial_cmp(&right.start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    next
+}
+
+fn run_whisper_with_args(
+    whisper_cli: &Path,
+    args: &[String],
+) -> Result<std::process::Output, TranscriptionError> {
+    let mut output = Command::new(whisper_cli)
+        .args(args)
+        .output()
+        .map_err(|error| {
+            TranscriptionError::WhisperFailed(format!("Unable to start whisper.cpp: {error}"))
+        })?;
+    if !output.status.success() {
+        let mut cpu_args = args.to_vec();
+        cpu_args.insert(0, "-ng".to_string());
+        output = Command::new(whisper_cli)
+            .args(&cpu_args)
+            .output()
+            .map_err(|error| {
+                TranscriptionError::WhisperFailed(format!(
+                    "Unable to start whisper.cpp CPU fallback: {error}"
+                ))
+            })?;
+    }
+    Ok(output)
+}
+
+struct DecoderLoopRecoveryContext<'a> {
+    ffmpeg: &'a Path,
+    whisper_cli: &'a Path,
+    model_path: &'a Path,
+    processing_wav: &'a Path,
+    recording_dir: &'a Path,
+    language: &'a str,
+    model_id: &'a str,
+    audio_duration: f64,
+}
+
+fn recover_decoder_loops(
+    segments: Vec<TranscriptSegment>,
+    context: DecoderLoopRecoveryContext<'_>,
+) -> (Vec<TranscriptSegment>, DecoderLoopRecoverySummary) {
+    const RECOVERY_PADDING_SECONDS: f64 = 15.0;
+
+    let candidates = detect_decoder_loops(&segments);
+    let mut summary = DecoderLoopRecoverySummary {
+        candidates: candidates.len(),
+        ..DecoderLoopRecoverySummary::default()
+    };
+    let mut current = segments;
+
+    for candidate in candidates {
+        summary.attempted += 1;
+        let clip_start = (candidate.start_time - RECOVERY_PADDING_SECONDS).max(0.0);
+        let clip_end = (candidate.end_time + RECOVERY_PADDING_SECONDS).min(context.audio_duration);
+        if clip_end <= clip_start {
+            summary.rejected += 1;
+            continue;
+        }
+
+        let retry_prefix = context.recording_dir.join(format!(
+            "decoder-loop-retry-{:.0}-{:.0}",
+            candidate.start_time * 1000.0,
+            candidate.end_time * 1000.0
+        ));
+        let retry_wav = retry_prefix.with_extension("wav");
+        let retry_json = retry_prefix.with_extension("json");
+        let ffmpeg_args = vec![
+            "-y".to_string(),
+            "-ss".to_string(),
+            format!("{clip_start:.3}"),
+            "-to".to_string(),
+            format!("{clip_end:.3}"),
+            "-i".to_string(),
+            context.processing_wav.to_string_lossy().to_string(),
+            "-map".to_string(),
+            "0:a:0".to_string(),
+            "-vn".to_string(),
+            "-ac".to_string(),
+            "1".to_string(),
+            "-ar".to_string(),
+            "16000".to_string(),
+            "-c:a".to_string(),
+            "pcm_s16le".to_string(),
+            "-sample_fmt".to_string(),
+            "s16".to_string(),
+            retry_wav.to_string_lossy().to_string(),
+        ];
+        let ffmpeg_output = Command::new(context.ffmpeg).args(&ffmpeg_args).output();
+        if !matches!(ffmpeg_output, Ok(ref output) if output.status.success()) {
+            let _ = std::fs::remove_file(&retry_wav);
+            summary.rejected += 1;
+            continue;
+        }
+
+        let whisper_args = vec![
+            "-m".to_string(),
+            context.model_path.to_string_lossy().to_string(),
+            "-f".to_string(),
+            retry_wav.to_string_lossy().to_string(),
+            "-l".to_string(),
+            context.language.to_string(),
+            "-mc".to_string(),
+            "0".to_string(),
+            "-oj".to_string(),
+            "-ojf".to_string(),
+            "-of".to_string(),
+            retry_prefix.to_string_lossy().to_string(),
+        ];
+        let retry_output = run_whisper_with_args(context.whisper_cli, &whisper_args);
+        if !matches!(retry_output, Ok(ref output) if output.status.success()) {
+            let _ = std::fs::remove_file(&retry_wav);
+            let _ = std::fs::remove_file(&retry_json);
+            summary.rejected += 1;
+            continue;
+        }
+
+        let retry_segments = parse_whisper_segments_with_sanitization(&retry_json)
+            .map(|(segments, _)| offset_segments(segments, clip_start));
+        let retry_segments = match retry_segments {
+            Ok(segments) => {
+                trim_segments_to_window(segments, candidate.start_time, candidate.end_time)
+            }
+            Err(_) => Vec::new(),
+        };
+
+        let _ = std::fs::remove_file(&retry_wav);
+        let _ = std::fs::remove_file(&retry_json);
+
+        if retry_segments.is_empty()
+            || !segments_have_reliable_monotonic_timing(&retry_segments)
+            || !detect_decoder_loops(&retry_segments).is_empty()
+            || retry_segments
+                .first()
+                .is_none_or(|segment| segment.start > candidate.start_time + 5.0)
+            || retry_segments
+                .last()
+                .is_none_or(|segment| segment.end < candidate.end_time - 5.0)
+        {
+            summary.rejected += 1;
+            continue;
+        }
+
+        eprintln!(
+            "Scribe transcription: decoder loop recovered model_id={} start={:.3} end={:.3} replacement_segments={}",
+            context.model_id,
+            candidate.start_time,
+            candidate.end_time,
+            retry_segments.len()
+        );
+        current = splice_recovered_segments(&current, &candidate, retry_segments);
+        summary.recovered += 1;
+    }
+
+    (current, summary)
+}
+
+fn transcript_from_segments(
+    segments: Vec<TranscriptSegment>,
+    language: &str,
+) -> (TranscriptData, RepetitionFilterSummary) {
+    let (segments, repetition_filter) = filter_repetition_loops(segments);
+    let text = segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    (
+        TranscriptData {
+            version: 2,
+            language: language.to_string(),
+            text,
+            segments,
+        },
+        repetition_filter,
+    )
 }
 
 fn summarize_invalid_utf8(bytes: &[u8]) -> Utf8SanitizationSummary {
@@ -2097,6 +2553,7 @@ fn summarize_invalid_utf8(bytes: &[u8]) -> Utf8SanitizationSummary {
     }
 }
 
+#[cfg(test)]
 fn parse_whisper_json_with_diagnostics(
     path: &Path,
     language: &str,
@@ -2108,6 +2565,14 @@ fn parse_whisper_json_with_diagnostics(
     ),
     TranscriptionError,
 > {
+    let (segments, sanitization) = parse_whisper_segments_with_sanitization(path)?;
+    let (transcript, repetition_filter) = transcript_from_segments(segments, language);
+    Ok((transcript, sanitization, repetition_filter))
+}
+
+fn parse_whisper_segments_with_sanitization(
+    path: &Path,
+) -> Result<(Vec<TranscriptSegment>, Option<Utf8SanitizationSummary>), TranscriptionError> {
     let raw_bytes = std::fs::read(path).map_err(|error| {
         TranscriptionError::TranscriptUnavailable(format!("Unable to read whisper output: {error}"))
     })?;
@@ -2174,24 +2639,7 @@ fn parse_whisper_json_with_diagnostics(
         });
     }
 
-    let (segments, repetition_filter) = filter_repetition_loops(segments);
-
-    let text = segments
-        .iter()
-        .map(|segment| segment.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    Ok((
-        TranscriptData {
-            version: 2,
-            language: language.to_string(),
-            text,
-            segments,
-        },
-        sanitization,
-        repetition_filter,
-    ))
+    Ok((segments, sanitization))
 }
 
 #[cfg(test)]
@@ -2379,6 +2827,7 @@ mod tests {
         assert_eq!(repetition_filter.candidates, 1);
         assert_eq!(repetition_filter.removed_segments, 4);
         assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
         assert_eq!(transcript.segments.len(), 3);
         assert_eq!(
             transcript.text,
@@ -2399,6 +2848,7 @@ mod tests {
 
         assert_eq!(repetition_filter.removed_segments, 0);
         assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
         assert_eq!(transcript.segments.len(), 2);
         assert_eq!(transcript.text, "To je pomembno. To je pomembno.");
     }
@@ -2417,6 +2867,7 @@ mod tests {
 
         assert_eq!(repetition_filter.removed_segments, 0);
         assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
         assert_eq!(transcript.segments.len(), 3);
         assert_eq!(
             transcript.text,
@@ -2433,8 +2884,164 @@ mod tests {
 
         assert_eq!(repetition_filter.removed_segments, 0);
         assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
         assert_eq!(transcript.text, "Ne, ne, ne, tega nisem mislil tako.");
         assert_eq!(transcript.segments.len(), 1);
+    }
+
+    fn test_segment(start: f64, end: f64, text: &str) -> TranscriptSegment {
+        TranscriptSegment {
+            start,
+            end,
+            text: text.to_string(),
+            words: text
+                .split_whitespace()
+                .enumerate()
+                .map(|(index, word)| TranscriptWord {
+                    text: word.to_string(),
+                    start: start + index as f64 * 0.1,
+                    end: start + index as f64 * 0.1 + 0.05,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn detects_long_advancing_decoder_loop() {
+        let repeated = "Če so povedali, da ga je 1% sodelovala pri tem 1% umetna inteligenca je vrednost takoj padla za 16 odstotkov";
+        let segments = vec![
+            test_segment(0.0, 4.0, "Uvodni stavek pred zanko."),
+            test_segment(10.0, 17.0, repeated),
+            test_segment(17.0, 24.0, repeated),
+            test_segment(24.0, 31.0, repeated),
+        ];
+
+        let candidates = detect_decoder_loops(&segments);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].start_index, 1);
+        assert_eq!(candidates[0].end_index, 4);
+    }
+
+    #[test]
+    fn decoder_loop_detector_allows_embedded_zero_duration_duplicate() {
+        let repeated = "Če so povedali, da ga je 1% sodelovala pri tem 1% umetna inteligenca je vrednost takoj padla za 16 odstotkov";
+        let segments = vec![
+            test_segment(10.0, 17.0, repeated),
+            test_segment(17.0, 24.0, repeated),
+            test_segment(24.0, 24.0, repeated),
+            test_segment(24.0, 31.0, repeated),
+        ];
+
+        let candidates = detect_decoder_loops(&segments);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].start_time, 10.0);
+        assert_eq!(candidates[0].end_time, 31.0);
+    }
+
+    #[test]
+    fn decoder_loop_detector_ignores_short_natural_repetition() {
+        let segments = vec![test_segment(
+            0.0,
+            2.0,
+            "Ne, ne, ne, tega nisem mislil tako.",
+        )];
+
+        assert!(detect_decoder_loops(&segments).is_empty());
+    }
+
+    #[test]
+    fn decoder_loop_detector_requires_three_long_segments() {
+        let repeated = "To je dovolj dolga ponovljena poved za preverjanje podobnosti med segmenti";
+        let segments = vec![
+            test_segment(0.0, 5.0, repeated),
+            test_segment(5.0, 10.0, repeated),
+        ];
+
+        assert!(detect_decoder_loops(&segments).is_empty());
+    }
+
+    #[test]
+    fn decoder_loop_detector_ignores_repeated_phrase_later() {
+        let repeated = "To je dovolj dolga poved ki se lahko v predavanju legitimno ponovi kasneje";
+        let segments = vec![
+            test_segment(0.0, 5.0, repeated),
+            test_segment(40.0, 45.0, repeated),
+            test_segment(90.0, 95.0, repeated),
+        ];
+
+        assert!(detect_decoder_loops(&segments).is_empty());
+    }
+
+    #[test]
+    fn decoder_loop_detector_flags_near_duplicate_advancing_loop() {
+        let segments = vec![
+            test_segment(10.0, 17.0, "Če so povedali da ga je 1 odstotek sodelovala pri tem 1 odstotek umetna inteligenca je vrednost takoj padla za 16 odstotkov"),
+            test_segment(17.0, 24.0, "Če so povedali da ga je 1 odstotek sodelovala pri tem umetna inteligenca je vrednost takoj padla za 16 odstotkov"),
+            test_segment(24.0, 31.0, "Če so povedali da ga je 1 odstotek sodelovala pri tem 1 odstotek umetna inteligenca je vrednost takoj padla za 16 odstotkov"),
+        ];
+
+        assert_eq!(detect_decoder_loops(&segments).len(), 1);
+    }
+
+    #[test]
+    fn decoder_loop_detector_rejects_nonmonotonic_timestamps() {
+        let repeated = "To je dovolj dolga ponovljena poved za preverjanje podobnosti med segmenti";
+        let segments = vec![
+            test_segment(10.0, 17.0, repeated),
+            test_segment(16.0, 23.0, repeated),
+            test_segment(23.0, 30.0, repeated),
+        ];
+
+        assert!(detect_decoder_loops(&segments).is_empty());
+    }
+
+    #[test]
+    fn splice_recovered_segments_offsets_and_replaces_window() {
+        let original = vec![
+            test_segment(0.0, 5.0, "Pred zanko."),
+            test_segment(
+                10.0,
+                17.0,
+                "Dolga ponovljena poved ki jo želimo zamenjati v oknu.",
+            ),
+            test_segment(
+                17.0,
+                24.0,
+                "Dolga ponovljena poved ki jo želimo zamenjati v oknu.",
+            ),
+            test_segment(
+                24.0,
+                31.0,
+                "Dolga ponovljena poved ki jo želimo zamenjati v oknu.",
+            ),
+            test_segment(35.0, 40.0, "Po zanki."),
+        ];
+        let candidate = DecoderLoopCandidate {
+            start_index: 1,
+            end_index: 4,
+            start_time: 10.0,
+            end_time: 31.0,
+        };
+        let retry = offset_segments(
+            vec![test_segment(
+                2.0,
+                8.0,
+                "Obnovljena pravilna vsebina z uporabnimi časi.",
+            )],
+            10.0,
+        );
+
+        let spliced = splice_recovered_segments(&original, &candidate, retry);
+
+        assert_eq!(spliced.len(), 3);
+        assert_eq!(
+            spliced[1].text,
+            "Obnovljena pravilna vsebina z uporabnimi časi."
+        );
+        assert_eq!(spliced[1].start, 12.0);
+        assert!(segments_have_reliable_monotonic_timing(&spliced));
     }
 
     #[test]
@@ -2455,12 +3062,49 @@ mod tests {
         assert_eq!(repetition_filter.candidates, 1);
         assert_eq!(repetition_filter.removed_segments, 3);
         assert_eq!(repetition_filter.zero_duration_loops, 1);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
         assert_eq!(transcript.segments.len(), 3);
         assert_eq!(transcript.segments[1].start, 138.66);
         assert_eq!(transcript.segments[1].end, 139.66);
         assert_eq!(
             transcript.text,
             "Pa bom povedal, kaj je. Gre za vprašanje človeške ustvarjalnosti. Oziroma, začeli so s tem."
+        );
+    }
+
+    #[test]
+    fn filters_zero_duration_duplicate_prefix_before_reliable_segment() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":134.74,"end":139.74,"text":"Pa bom povedal, kaj je, če ste se kdaj pogovarjali o tem. Gre za vprašanje","words":[{"word":"Pa","start":134.79,"end":134.93},{"word":" bom","start":134.93,"end":135.22},{"word":" povedal,","start":135.22,"end":136.07},{"word":" kaj","start":136.07,"end":136.35},{"word":" je,","start":136.36,"end":136.74},{"word":" če","start":136.74,"end":137.02},{"word":" ste","start":137.02,"end":137.31},{"word":" se","start":137.31,"end":137.49},{"word":" kdaj","start":137.49,"end":137.87},{"word":" pogovarjali","start":137.87,"end":138.92},{"word":" o","start":138.92,"end":139.01},{"word":" tem.","start":139.01,"end":139.74},{"word":" vprašanje","start":139.74,"end":139.785}]},
+                {"start":139.74,"end":139.74,"text":"človeškega ustvarjalnosti.","words":[{"word":"ustvarjalnosti.","start":139.74,"end":139.785}]},
+                {"start":139.74,"end":139.74,"text":"Gre za vprašanje človeškega ustvarjalnosti.","words":[{"word":"ustvarjalnosti.","start":139.74,"end":139.785}]},
+                {"start":139.74,"end":139.74,"text":"Gre za vprašanje človeškega ustvarjalnosti.","words":[{"word":"ustvarjalnosti.","start":139.74,"end":139.785}]},
+                {"start":139.74,"end":139.74,"text":"Gre za vprašanje človeškega ustvarjalnosti.","words":[{"word":"ustvarjalnosti.","start":139.74,"end":139.785}]},
+                {"start":139.74,"end":141.74,"text":"Gre za vprašanje človeškega ustvarjalnosti.","words":[{"word":"Gre","start":139.79,"end":139.87},{"word":" za","start":139.87,"end":139.96},{"word":" vprašanje","start":139.96,"end":140.4},{"word":" človeškega","start":140.4,"end":140.94},{"word":" ustvarjalnosti.","start":140.94,"end":141.74}]},
+                {"start":141.74,"end":147.74,"text":"Oziroma, začeli so s tem."}
+            ]}"#
+            .as_bytes(),
+        )
+        .expect("zero-duration prefix repetition fixture parses");
+
+        assert_eq!(repetition_filter.candidates, 1);
+        assert_eq!(repetition_filter.removed_segments, 4);
+        assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 1);
+        assert_eq!(transcript.segments.len(), 3);
+        assert_eq!(
+            transcript.text,
+            "Pa bom povedal, kaj je, če ste se kdaj pogovarjali o tem. Gre za vprašanje Gre za vprašanje človeškega ustvarjalnosti. Oziroma, začeli so s tem."
+        );
+        assert_eq!(transcript.segments[1].start, 139.74);
+        assert_eq!(transcript.segments[1].end, 141.74);
+        assert_eq!(
+            transcript.segments[1]
+                .words
+                .last()
+                .map(|word| word.text.as_str()),
+            Some("ustvarjalnosti.")
         );
     }
 
@@ -2480,6 +3124,7 @@ mod tests {
         assert_eq!(repetition_filter.candidates, 0);
         assert_eq!(repetition_filter.removed_segments, 0);
         assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
         assert_eq!(transcript.segments.len(), 4);
     }
 
@@ -2497,8 +3142,65 @@ mod tests {
         assert_eq!(repetition_filter.candidates, 0);
         assert_eq!(repetition_filter.removed_segments, 0);
         assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
         assert_eq!(transcript.segments.len(), 2);
         assert_eq!(transcript.text, "To je pomembno. To je pomembno.");
+    }
+
+    #[test]
+    fn preserves_two_zero_duration_prefix_duplicates() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":20.0,"end":20.0,"text":"ustvarjalnosti.","words":[{"word":"ustvarjalnosti.","start":20.0,"end":20.045}]},
+                {"start":20.0,"end":20.0,"text":"ustvarjalnosti.","words":[{"word":"ustvarjalnosti.","start":20.0,"end":20.045}]},
+                {"start":20.0,"end":22.0,"text":"Gre za vprašanje človeškega ustvarjalnosti.","words":[{"word":"Gre","start":20.0,"end":20.2},{"word":" za","start":20.2,"end":20.4},{"word":" vprašanje","start":20.4,"end":21.0},{"word":" človeškega","start":21.0,"end":21.5},{"word":" ustvarjalnosti.","start":21.5,"end":22.0}]}
+            ]}"#
+            .as_bytes(),
+        )
+        .expect("two zero-duration prefix fixture parses");
+
+        assert_eq!(repetition_filter.candidates, 0);
+        assert_eq!(repetition_filter.removed_segments, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
+        assert_eq!(transcript.segments.len(), 3);
+    }
+
+    #[test]
+    fn preserves_zero_duration_run_before_non_matching_reliable_segment() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":20.0,"end":20.0,"text":"ustvarjalnosti.","words":[{"word":"ustvarjalnosti.","start":20.0,"end":20.045}]},
+                {"start":20.0,"end":20.0,"text":"ustvarjalnosti.","words":[{"word":"ustvarjalnosti.","start":20.0,"end":20.045}]},
+                {"start":20.0,"end":20.0,"text":"ustvarjalnosti.","words":[{"word":"ustvarjalnosti.","start":20.0,"end":20.045}]},
+                {"start":20.0,"end":22.0,"text":"Naslednja misel je drugačna.","words":[{"word":"Naslednja","start":20.0,"end":20.5},{"word":" misel","start":20.5,"end":21.0},{"word":" je","start":21.0,"end":21.2},{"word":" drugačna.","start":21.2,"end":22.0}]}
+            ]}"#
+            .as_bytes(),
+        )
+        .expect("non-matching reliable prefix fixture parses");
+
+        assert_eq!(repetition_filter.candidates, 0);
+        assert_eq!(repetition_filter.removed_segments, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
+        assert_eq!(transcript.segments.len(), 4);
+    }
+
+    #[test]
+    fn preserves_unrelated_partial_words_at_same_timestamp() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":30.0,"end":30.0,"text":"ustvarjalnosti.","words":[{"word":"ustvarjalnosti.","start":30.0,"end":30.045}]},
+                {"start":30.0,"end":30.0,"text":"človeškega.","words":[{"word":"človeškega.","start":30.0,"end":30.045}]},
+                {"start":30.0,"end":30.0,"text":"vprašanje.","words":[{"word":"vprašanje.","start":30.0,"end":30.045}]},
+                {"start":30.0,"end":32.0,"text":"Gre za vprašanje človeškega ustvarjalnosti.","words":[{"word":"Gre","start":30.0,"end":30.2},{"word":" za","start":30.2,"end":30.4},{"word":" vprašanje","start":30.4,"end":31.0},{"word":" človeškega","start":31.0,"end":31.5},{"word":" ustvarjalnosti.","start":31.5,"end":32.0}]}
+            ]}"#
+            .as_bytes(),
+        )
+        .expect("unrelated partial word fixture parses");
+
+        assert_eq!(repetition_filter.candidates, 0);
+        assert_eq!(repetition_filter.removed_segments, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
+        assert_eq!(transcript.segments.len(), 4);
     }
 
     #[test]
@@ -2515,6 +3217,7 @@ mod tests {
 
         assert_eq!(repetition_filter.removed_segments, 2);
         assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(repetition_filter.zero_duration_prefix_loops, 0);
         assert_eq!(transcript.text, "Č š ž, prav? Vamo videti.");
         assert_eq!(transcript.segments[0].text, "Č š ž, prav?");
         assert_eq!(transcript.segments[1].words[0].start, 5.0);
@@ -4026,6 +4729,7 @@ fn transcribe_recording_blocking(
         processing_wav.to_string_lossy().to_string(),
         "-l".to_string(),
         transcription_language.clone(),
+        "-oj".to_string(),
         "-ojf".to_string(),
         "-of".to_string(),
         whisper_output_prefix.to_string_lossy().to_string(),
@@ -4173,11 +4877,8 @@ fn transcribe_recording_blocking(
         Some(metadata.duration_seconds),
     );
 
-    let transcript = match parse_whisper_json_with_diagnostics(
-        &whisper_output_json,
-        &transcription_language,
-    ) {
-        Ok((transcript, sanitization, repetition_filter)) => {
+    let transcript = match parse_whisper_segments_with_sanitization(&whisper_output_json) {
+        Ok((segments, sanitization)) => {
             if let Some(summary) = sanitization {
                 append_transcription_diagnostic(
                     &app,
@@ -4195,23 +4896,57 @@ fn transcribe_recording_blocking(
                     summary.first_offsets
                 );
             }
+            let initial_decoder_loop_candidates = detect_decoder_loops(&segments);
+            append_transcription_diagnostic(
+                &app,
+                &recording_id,
+                format!(
+                    "stage=decoder_loop_detection candidates={}",
+                    initial_decoder_loop_candidates.len()
+                ),
+            );
+            let recovery_context = DecoderLoopRecoveryContext {
+                ffmpeg: &ffmpeg,
+                whisper_cli: &whisper_cli,
+                model_path: &model_path,
+                processing_wav: &processing_wav,
+                recording_dir: &recording_dir,
+                language: &transcription_language,
+                model_id: &settings.whisper_model,
+                audio_duration: processing_wav_duration.unwrap_or(metadata.duration_seconds as f64),
+            };
+            let (segments, recovery_summary) = recover_decoder_loops(segments, recovery_context);
+            append_transcription_diagnostic(
+                &app,
+                &recording_id,
+                format!(
+                    "stage=decoder_loop_recovery attempted={} recovered={} rejected={}",
+                    recovery_summary.attempted,
+                    recovery_summary.recovered,
+                    recovery_summary.rejected
+                ),
+            );
+            let (transcript, repetition_filter) =
+                transcript_from_segments(segments, &transcription_language);
             if repetition_filter.candidates > 0 || repetition_filter.removed_segments > 0 {
                 append_transcription_diagnostic(
                     &app,
                     &recording_id,
                     format!(
-                        "stage=parse_repetition_filter candidates={} removed_segments={} zero_duration_loops={}",
+                        "stage=parse_repetition_filter candidates={} removed_segments={} zero_duration_loops={} zero_duration_prefix_loops={}",
                         repetition_filter.candidates,
                         repetition_filter.removed_segments,
-                        repetition_filter.zero_duration_loops
+                        repetition_filter.zero_duration_loops,
+                        repetition_filter.zero_duration_prefix_loops
                     ),
                 );
                 eprintln!(
-                    "Scribe transcription: repetition filter recording_id={} candidates={} removed_segments={} zero_duration_loops={}",
+                    "Scribe transcription: repetition filter recording_id={} candidates={} removed_segments={} zero_duration_loops={} zero_duration_prefix_loops={}",
                     recording_id,
                     repetition_filter.candidates,
                     repetition_filter.removed_segments,
-                    repetition_filter.zero_duration_loops
+                    repetition_filter.zero_duration_loops,
+                    repetition_filter.zero_duration_prefix_loops
                 );
             }
             append_transcription_diagnostic(

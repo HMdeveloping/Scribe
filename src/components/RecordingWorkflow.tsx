@@ -450,7 +450,20 @@ type FlatWord = {
   end: number;
 };
 
+type TranscriptParagraphWord = FlatWord & {
+  flatIndex: number;
+};
+
+type TranscriptParagraph = {
+  id: string;
+  words: TranscriptParagraphWord[];
+};
+
 type FollowMode = "following" | "suspendedByUser";
+
+function endsWithSentencePunctuation(text: string): boolean {
+  return /[.!?…]["')\]]?$/.test(text.trim());
+}
 
 function buildFlatWordIndex(segments: TranscriptSegment[]): FlatWord[] {
   const flat: FlatWord[] = [];
@@ -462,6 +475,53 @@ function buildFlatWordIndex(segments: TranscriptSegment[]): FlatWord[] {
     });
   });
   return flat;
+}
+
+function buildTranscriptParagraphs(segments: TranscriptSegment[], flatWords: FlatWord[]): TranscriptParagraph[] {
+  const paragraphs: TranscriptParagraph[] = [];
+  let current: TranscriptParagraphWord[] = [];
+  let previousWord: FlatWord | null = null;
+
+  const pushCurrent = () => {
+    if (current.length === 0) return;
+    const first = current[0];
+    const last = current[current.length - 1];
+    paragraphs.push({
+      id: `paragraph-${first.segmentIndex}-${first.wordIndex}-${last.segmentIndex}-${last.wordIndex}`,
+      words: current,
+    });
+    current = [];
+  };
+
+  flatWords.forEach((word, flatIndex) => {
+    if (previousWord) {
+      const gap = word.start - previousWord.end;
+      const shouldBreak = gap >= 3 || (gap >= 1.25 && endsWithSentencePunctuation(previousWord.text));
+      if (shouldBreak) pushCurrent();
+    }
+
+    current.push({ ...word, flatIndex });
+    previousWord = word;
+  });
+
+  pushCurrent();
+
+  if (paragraphs.length > 0) return paragraphs;
+
+  return segments
+    .map((segment, segmentIndex) => ({
+      id: `paragraph-fallback-${segmentIndex}`,
+      words: [{
+        globalIndex: -1,
+        flatIndex: -1,
+        segmentIndex,
+        wordIndex: -1,
+        text: segment.text,
+        start: segment.start,
+        end: segment.end,
+      }],
+    }))
+    .filter((paragraph) => paragraph.words[0].text.trim().length > 0);
 }
 
 function findActiveWordIndex(flatWords: FlatWord[], currentTime: number, lastIndex: number): number {
@@ -497,13 +557,7 @@ function findActiveWordIndex(flatWords: FlatWord[], currentTime: number, lastInd
 function TranscriptContent({ transcript, player, t }: { transcript: TranscriptData; player: ReturnType<typeof useAudioPlayer>; t: TFunction }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const flatWords = useMemo(() => buildFlatWordIndex(transcript.segments), [transcript.segments]);
-  const wordIndexMap = useMemo(() => {
-    const map = new Map<string, number>();
-    flatWords.forEach((word, index) => {
-      map.set(`${word.segmentIndex}:${word.wordIndex}`, index);
-    });
-    return map;
-  }, [flatWords]);
+  const paragraphs = useMemo(() => buildTranscriptParagraphs(transcript.segments, flatWords), [flatWords, transcript.segments]);
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
   const lastIndexRef = useRef(-1);
   const animationFrameRef = useRef<number | null>(null);
@@ -511,7 +565,7 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
   const programmaticScrollTimeoutRef = useRef<number | null>(null);
   const [followMode, setFollowMode] = useState<FollowMode>("following");
   const activeWordRef = useRef<HTMLSpanElement | null>(null);
-  const activeLineRef = useRef<HTMLParagraphElement | null>(null);
+  const activeParagraphRef = useRef<HTMLParagraphElement | null>(null);
   const centerFollowActiveRef = useRef(false);
   const scrollFrameRef = useRef<number | null>(null);
 
@@ -572,8 +626,8 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
 
   const scrollActiveLine = useCallback((behavior: ScrollBehavior = "auto", forceCenter = false) => {
     const container = containerRef.current;
-    const line = activeLineRef.current;
-    if (!container || !line) return;
+    const paragraph = activeParagraphRef.current;
+    if (!container || !paragraph) return;
 
     if (scrollFrameRef.current !== null) {
       cancelAnimationFrame(scrollFrameRef.current);
@@ -582,23 +636,24 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
     scrollFrameRef.current = requestAnimationFrame(() => {
       scrollFrameRef.current = null;
       const containerRect = container.getBoundingClientRect();
-      const lineRect = line.getBoundingClientRect();
-      const lineCenter = lineRect.top + lineRect.height / 2;
+      const paragraphRect = paragraph.getBoundingClientRect();
+      const activeRect = activeWordRef.current?.getBoundingClientRect() ?? paragraphRect;
+      const activeCenter = activeRect.top + activeRect.height / 2;
       const viewportCenter = containerRect.top + container.clientHeight / 2;
       const bottomGuard = containerRect.bottom - Math.min(64, container.clientHeight * 0.18);
       const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
 
       if (forceCenter) {
         centerFollowActiveRef.current = true;
-      } else if (!centerFollowActiveRef.current && lineCenter >= viewportCenter) {
+      } else if (!centerFollowActiveRef.current && activeCenter >= viewportCenter) {
         centerFollowActiveRef.current = true;
       }
 
       let nextScrollTop = container.scrollTop;
       if (centerFollowActiveRef.current) {
-        nextScrollTop += lineCenter - viewportCenter;
-      } else if (lineRect.bottom > bottomGuard) {
-        nextScrollTop += lineRect.bottom - bottomGuard;
+        nextScrollTop += activeCenter - viewportCenter;
+      } else if (activeRect.bottom > bottomGuard) {
+        nextScrollTop += activeRect.bottom - bottomGuard;
       } else {
         return;
       }
@@ -617,10 +672,9 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
 
   const suspendFollowingForManualScroll = useCallback(() => {
     if (programmaticScrollRef.current) return;
-    if (!player.isPlaying) return;
     setFollowMode("suspendedByUser");
     centerFollowActiveRef.current = false;
-  }, [player.isPlaying]);
+  }, []);
 
   const handleWordClick = useCallback((word: FlatWord) => {
     centerFollowActiveRef.current = true;
@@ -651,20 +705,18 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
         onWheel={suspendFollowingForManualScroll}
         onTouchMove={suspendFollowingForManualScroll}
       >
-        {transcript.segments.map((segment, segmentIndex) => (
+        {paragraphs.map((paragraph) => (
           <p
-            key={`segment-${segmentIndex}`}
-            ref={activeWordIndex >= 0 && flatWords[activeWordIndex]?.segmentIndex === segmentIndex ? activeLineRef : null}
-            className="transcript-segment"
+            key={paragraph.id}
+            ref={paragraph.words.some((word) => word.flatIndex === activeWordIndex) ? activeParagraphRef : null}
+            className="transcript-paragraph"
           >
-            {(segment.words?.length ?? 0) > 0 ? (
-              segment.words!.map((word, wordIndex) => {
-                const flatIndex = wordIndexMap.get(`${segmentIndex}:${wordIndex}`) ?? -1;
-                const isActive = flatIndex === activeWordIndex;
-                const timedWord = flatIndex >= 0 ? flatWords[flatIndex] : null;
+            {paragraph.words.map((word, wordIndex) => {
+                const isActive = word.flatIndex === activeWordIndex;
+                const timedWord = word.flatIndex >= 0 ? flatWords[word.flatIndex] : null;
                 const isClickable = timedWord !== null;
                 return (
-                  <span key={`word-wrap-${segmentIndex}-${wordIndex}`}>
+                  <span key={`word-wrap-${word.segmentIndex}-${word.wordIndex}-${wordIndex}`}>
                     {wordIndex > 0 ? " " : ""}
                     <span
                       ref={isActive ? activeWordRef : null}
@@ -679,10 +731,7 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
                     </span>
                   </span>
                 );
-              })
-            ) : (
-              <span className="transcript-word">{segment.text}</span>
-            )}
+              })}
           </p>
         ))}
       </div>
