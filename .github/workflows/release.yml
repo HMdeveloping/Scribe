@@ -31,7 +31,7 @@ jobs:
       matrix:
         include:
           - name: macOS Apple Silicon
-            runner: macos-15
+            runner: xcode-27
             target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin --bundles app"
             alias: Scribe.dmg
@@ -208,7 +208,7 @@ jobs:
           }
 
       - name: Build signed Tauri bundles for workflow artifact
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_release != true
+        if: matrix.target == 'x86_64-pc-windows-msvc' && github.event_name == 'workflow_dispatch' && inputs.publish_release != true
         uses: tauri-apps/tauri-action@v1
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -216,31 +216,8 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
-      - name: Verify dry-run macOS app runtime resources
-        if: matrix.target == 'aarch64-apple-darwin' && github.event_name == 'workflow_dispatch' && inputs.publish_release != true
-        shell: bash
-        run: |
-          set -euo pipefail
-          app_path="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scribe.app"
-          bundled_dir="$app_path/Contents/Resources/bin/${{ matrix.target }}"
-          test -d "$bundled_dir"
-          test -x "$bundled_dir/ffmpeg"
-          test -x "$bundled_dir/ffprobe"
-          test -x "$bundled_dir/whisper-cli"
-          test -n "$(find "$bundled_dir" -maxdepth 1 -name 'libwhisper*.dylib' -print -quit)"
-          test -n "$(find "$bundled_dir" -maxdepth 1 -name 'libggml*.dylib' -print -quit)"
-          find "$app_path" -type f | grep -E 'ffmpeg|ffprobe|whisper'
-          ls -l "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
-          file "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
-          "$bundled_dir/ffmpeg" -version
-          "$bundled_dir/ffprobe" -version
-          ! "$bundled_dir/ffmpeg" -version | grep -- '--enable-nonfree'
-          ! "$bundled_dir/ffprobe" -version | grep -- '--enable-nonfree'
-          otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli"
-          ! otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli" | grep -E '/opt/homebrew|/usr/local'
-
       - name: Upload dry-run Tauri artifacts
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_release != true
+        if: matrix.target == 'x86_64-pc-windows-msvc' && github.event_name == 'workflow_dispatch' && inputs.publish_release != true
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifactName }}
@@ -248,31 +225,38 @@ jobs:
           if-no-files-found: error
 
       - name: Build macOS release bundle for runtime verification
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- ${{ matrix.args }}
 
-      - name: Select Xcode 26 for modern macOS icons
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+      - name: Verify Xcode 27 for modern macOS icons
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: |
           set -euo pipefail
-          sudo xcode-select -s /Applications/Xcode_26.0.app/Contents/Developer
           xcode-select -p
-          xcodebuild -version
+          xcode_version="$(xcodebuild -version)"
+          echo "$xcode_version"
+          xcode_major="$(printf '%s\n' "$xcode_version" | awk '/^Xcode / { split($2, parts, "."); print parts[1]; exit }')"
+          if [ "$xcode_major" != "27" ]; then
+            echo "Expected Xcode 27.x for frozen Icon Composer source, got:"
+            echo "$xcode_version"
+            exit 1
+          fi
           xcrun --sdk macosx --show-sdk-version
           xcrun --find actool
+          sw_vers
 
       - name: Verify modern macOS icon toolchain
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: npm run icon:macos:verify-toolchain
 
       - name: Compile and apply final modern macOS icon
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: |
           set -euo pipefail
@@ -284,7 +268,7 @@ jobs:
           rm -f "$macos_dir"/*.app.tar.gz "$macos_dir"/*.app.tar.gz.sig
 
       - name: Sign final macOS app after icon injection
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: |
           set -euo pipefail
@@ -293,7 +277,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app_path"
 
       - name: Create updater archive from final signed macOS app
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -309,12 +293,12 @@ jobs:
           test -s "$tar_path.sig"
 
       - name: Verify final macOS app and updater icon resources
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: npm run icon:macos:verify-final-app
 
       - name: Build deterministic macOS release DMG
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: node scripts/build-release-dmg.mjs
 
@@ -327,7 +311,7 @@ jobs:
         run: npm run tauri build -- ${{ matrix.args }}
 
       - name: Verify release macOS app runtime resources before upload
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: |
           set -euo pipefail
@@ -350,7 +334,7 @@ jobs:
           ! otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli" | grep -E '/opt/homebrew|/usr/local'
 
       - name: Verify macOS release app runtime resources
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: |
           set -euo pipefail
@@ -369,7 +353,7 @@ jobs:
           ! otool -L "$bundled_dir/ffmpeg" "$bundled_dir/ffprobe" "$bundled_dir/whisper-cli" | grep -E '/opt/homebrew|/usr/local'
 
       - name: Verify macOS release DMG layout assets
-        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: |
           set -euo pipefail
@@ -459,6 +443,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.releaseArtifactName }}
+          path: ${{ matrix.artifactPath }}
+          if-no-files-found: error
+
+      - name: Upload macOS dry-run release pipeline artifacts
+        if: matrix.target == 'aarch64-apple-darwin' && github.event_name == 'workflow_dispatch' && inputs.publish_release != true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifactName }}
           path: ${{ matrix.artifactPath }}
           if-no-files-found: error
 
