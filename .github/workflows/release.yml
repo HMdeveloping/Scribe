@@ -33,7 +33,7 @@ jobs:
           - name: macOS Apple Silicon
             runner: macos-15
             target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin --bundles app,dmg"
+            args: "--target aarch64-apple-darwin --bundles app"
             alias: Scribe.dmg
             aliasGlob: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             artifactName: Scribe-macOS-dry-run
@@ -255,6 +255,64 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- ${{ matrix.args }}
 
+      - name: Select Xcode 26 for modern macOS icons
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.0.app/Contents/Developer
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          xcrun --find actool
+
+      - name: Verify modern macOS icon toolchain
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        run: npm run icon:macos:verify-toolchain
+
+      - name: Compile and apply final modern macOS icon
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scribe.app"
+          macos_dir="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+          test -d "$app_path"
+          npm run icon:macos:compile
+          npm run icon:macos:apply -- --app="$app_path"
+          rm -f "$macos_dir"/*.app.tar.gz "$macos_dir"/*.app.tar.gz.sig
+
+      - name: Sign final macOS app after icon injection
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scribe.app"
+          codesign --force --deep --options runtime --sign - "$app_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+
+      - name: Create updater archive from final signed macOS app
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          macos_dir="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+          tar_path="$macos_dir/Scribe.app.tar.gz"
+          test -d "$macos_dir/Scribe.app"
+          tar -C "$macos_dir" -czf "$tar_path" Scribe.app
+          ./node_modules/.bin/tauri signer sign "$tar_path" > "$tar_path.sig"
+          test -s "$tar_path"
+          test -s "$tar_path.sig"
+
+      - name: Verify final macOS app and updater icon resources
+        if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
+        shell: bash
+        run: npm run icon:macos:verify-final-app
+
       - name: Build deterministic macOS release DMG
         if: matrix.target == 'aarch64-apple-darwin' && (github.event_name == 'push' || inputs.publish_release == true)
         shell: bash
@@ -361,6 +419,18 @@ jobs:
 
           [ -d "$volume_path/Scribe.app" ] || fail "Scribe.app not found at $volume_path/Scribe.app"
           pass "Scribe.app found"
+
+          resources_dir="$volume_path/Scribe.app/Contents/Resources"
+          info_plist="$volume_path/Scribe.app/Contents/Info.plist"
+          executable="$volume_path/Scribe.app/Contents/MacOS/scribe-app"
+          [ -s "$resources_dir/Assets.car" ] || fail "Assets.car not found or empty in DMG app"
+          [ -s "$resources_dir/Scribe.icns" ] || fail "Scribe.icns not found or empty in DMG app"
+          [ -s "$resources_dir/icon.icns" ] || fail "legacy icon.icns not found or empty in DMG app"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$info_plist")" = "Scribe" ] || fail "CFBundleIconName is not Scribe in DMG app"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$info_plist")" = "Scribe" ] || fail "CFBundleIconFile is not Scribe in DMG app"
+          file "$executable" | grep -F 'arm64' >/dev/null || fail "DMG app executable is not arm64"
+          codesign --verify --deep --strict --verbose=2 "$volume_path/Scribe.app" || fail "DMG app codesign verification failed"
+          pass "DMG app icon resources and signature verified"
 
           [ -L "$volume_path/Applications" ] || fail "Applications symlink not found at $volume_path/Applications"
           applications_target="$(readlink "$volume_path/Applications")"

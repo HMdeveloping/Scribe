@@ -261,6 +261,8 @@ const en = {
   whatsNew0114RepetitionHallucinations: "Improved prevention of repeated transcript sections",
   whatsNew0115ZeroDurationLoops: "Improved transcription reliability for rare repeated zero-duration phrase loops",
   whatsNew0116ReliabilityReadability: "Improved transcription reliability for rare duplicate phrase artifacts and made transcripts flow more naturally",
+  whatsNew0117TranscriptReadability: "Improved transcript readability with normal word spacing and more natural paragraph breaks",
+  whatsNew0117MacIcon: "Improved the Scribe icon presentation on macOS",
   welcomeToScribe: "Welcome to Scribe",
   onboardingWelcomeCopy: "Record, import, and transcribe audio with a local-first workspace.",
   onboardingRecordImport: "Record or import audio",
@@ -445,6 +447,49 @@ const whatsNew0116Translations: Record<AppLanguage, Pick<Dictionary, "whatsNew01
   pl: { whatsNew0116ReliabilityReadability: "Poprawiono niezawodność transkrypcji przy rzadkich zduplikowanych frazach i bardziej naturalny przepływ tekstu." },
 };
 
+const whatsNew0117Translations: Record<AppLanguage, Pick<Dictionary, "whatsNew0117TranscriptReadability" | "whatsNew0117MacIcon">> = {
+  sl: {
+    whatsNew0117TranscriptReadability: "Izboljšana berljivost prepisov z običajnimi presledki med besedami in naravnejšimi odstavki.",
+    whatsNew0117MacIcon: "Izboljšan prikaz ikone Scribe v sistemu macOS.",
+  },
+  en: {
+    whatsNew0117TranscriptReadability: "Improved transcript readability with normal word spacing and more natural paragraph breaks.",
+    whatsNew0117MacIcon: "Improved the Scribe icon presentation on macOS.",
+  },
+  de: {
+    whatsNew0117TranscriptReadability: "Verbesserte Lesbarkeit von Transkripten mit normalen Wortabständen und natürlicheren Absatzumbrüchen.",
+    whatsNew0117MacIcon: "Verbesserte Darstellung des Scribe-Symbols unter macOS.",
+  },
+  es: {
+    whatsNew0117TranscriptReadability: "Mejor legibilidad de las transcripciones con espaciado normal entre palabras y saltos de párrafo más naturales.",
+    whatsNew0117MacIcon: "Mejor presentación del icono de Scribe en macOS.",
+  },
+  it: {
+    whatsNew0117TranscriptReadability: "Migliore leggibilità delle trascrizioni con spaziatura normale tra le parole e interruzioni di paragrafo più naturali.",
+    whatsNew0117MacIcon: "Migliorata la presentazione dell'icona di Scribe su macOS.",
+  },
+  hr: {
+    whatsNew0117TranscriptReadability: "Poboljšana čitljivost transkripata s normalnim razmacima između riječi i prirodnijim prijelomima odlomaka.",
+    whatsNew0117MacIcon: "Poboljšan prikaz ikone Scribe na macOS-u.",
+  },
+  fr: {
+    whatsNew0117TranscriptReadability: "Lisibilité améliorée des transcriptions avec un espacement normal des mots et des paragraphes plus naturels.",
+    whatsNew0117MacIcon: "Présentation améliorée de l'icône Scribe sur macOS.",
+  },
+  pt: {
+    whatsNew0117TranscriptReadability: "Melhor legibilidade das transcrições com espaçamento normal entre palavras e quebras de parágrafo mais naturais.",
+    whatsNew0117MacIcon: "Apresentação melhorada do ícone do Scribe no macOS.",
+  },
+  nl: {
+    whatsNew0117TranscriptReadability: "Betere leesbaarheid van transcripties met normale woordafstand en natuurlijkere alinea-afbrekingen.",
+    whatsNew0117MacIcon: "Verbeterde weergave van het Scribe-icoon op macOS.",
+  },
+  pl: {
+    whatsNew0117TranscriptReadability: "Poprawiono czytelność transkrypcji dzięki normalnym odstępom między słowami i bardziej naturalnym podziałom akapitów.",
+    whatsNew0117MacIcon: "Poprawiono prezentację ikony Scribe w systemie macOS.",
+  },
+};
+
 const updaterErrorTranslations: Record<AppLanguage, Partial<Dictionary>> = {
   en: {},
   sl: {
@@ -593,6 +638,7 @@ for (const language of languages) {
   Object.assign(dictionaries[language.code], whatsNew0114Translations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0115Translations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0116Translations[language.code]);
+  Object.assign(dictionaries[language.code], whatsNew0117Translations[language.code]);
   Object.assign(dictionaries[language.code], updaterErrorTranslations[language.code]);
   if (language.code !== "en") Object.assign(dictionaries[language.code], v01ProgressTranslations[language.code], onboardingTranslations[language.code], modelRecoveryTranslations[language.code], reliabilityTranslations[language.code]);
 }

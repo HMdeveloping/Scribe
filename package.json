@@ -1,7 +1,7 @@
 {
   "name": "scribe-app",
   "private": true,
-  "version": "0.1.16",
+  "version": "0.1.17",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,6 +13,10 @@
     "test:e2e": "node tests/stability/e2e.mjs",
     "test:soak": "node tests/stability/soak.mjs",
     "test:stability": "node tests/stability/run-stability.mjs",
+    "icon:macos:verify-toolchain": "node scripts/verify-modern-macos-icon-toolchain.mjs",
+    "icon:macos:compile": "node scripts/compile-modern-macos-icon.mjs",
+    "icon:macos:apply": "node scripts/apply-modern-macos-icon-to-app.mjs",
+    "icon:macos:verify-final-app": "node scripts/verify-final-macos-release-app.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

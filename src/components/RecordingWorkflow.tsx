@@ -465,6 +465,11 @@ function endsWithSentencePunctuation(text: string): boolean {
   return /[.!?…]["')\]]?$/.test(text.trim());
 }
 
+const STRONG_PARAGRAPH_GAP_SECONDS = 3;
+const SENTENCE_PAUSE_SECONDS = 1.25;
+const MAX_PARAGRAPH_WORDS = 110;
+const MAX_PARAGRAPH_SENTENCES = 6;
+
 function buildFlatWordIndex(segments: TranscriptSegment[]): FlatWord[] {
   const flat: FlatWord[] = [];
   segments.forEach((segment, segmentIndex) => {
@@ -481,6 +486,7 @@ function buildTranscriptParagraphs(segments: TranscriptSegment[], flatWords: Fla
   const paragraphs: TranscriptParagraph[] = [];
   let current: TranscriptParagraphWord[] = [];
   let previousWord: FlatWord | null = null;
+  let currentSentenceCount = 0;
 
   const pushCurrent = () => {
     if (current.length === 0) return;
@@ -491,16 +497,21 @@ function buildTranscriptParagraphs(segments: TranscriptSegment[], flatWords: Fla
       words: current,
     });
     current = [];
+    currentSentenceCount = 0;
   };
 
   flatWords.forEach((word, flatIndex) => {
     if (previousWord) {
       const gap = word.start - previousWord.end;
-      const shouldBreak = gap >= 3 || (gap >= 1.25 && endsWithSentencePunctuation(previousWord.text));
+      const previousEndsSentence = endsWithSentencePunctuation(previousWord.text);
+      const shouldBreak = gap >= STRONG_PARAGRAPH_GAP_SECONDS
+        || (gap >= SENTENCE_PAUSE_SECONDS && previousEndsSentence)
+        || (previousEndsSentence && (current.length >= MAX_PARAGRAPH_WORDS || currentSentenceCount >= MAX_PARAGRAPH_SENTENCES));
       if (shouldBreak) pushCurrent();
     }
 
     current.push({ ...word, flatIndex });
+    if (endsWithSentencePunctuation(word.text)) currentSentenceCount += 1;
     previousWord = word;
   });
 
