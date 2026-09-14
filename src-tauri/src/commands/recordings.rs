@@ -1907,6 +1907,7 @@ struct Utf8SanitizationSummary {
 struct RepetitionFilterSummary {
     candidates: usize,
     removed_segments: usize,
+    zero_duration_loops: usize,
 }
 
 fn normalized_repetition_key(text: &str) -> String {
@@ -1931,6 +1932,19 @@ fn has_reliable_segment_timing(segment: &TranscriptSegment) -> bool {
         && segment.end.is_finite()
         && segment.start >= 0.0
         && segment.end > segment.start
+}
+
+fn has_zero_duration_boundary_timing(
+    previous: &TranscriptSegment,
+    segment: &TranscriptSegment,
+) -> bool {
+    const TIMING_EPSILON_SECONDS: f64 = 0.05;
+
+    segment.start.is_finite()
+        && segment.end.is_finite()
+        && segment.start >= 0.0
+        && (segment.end - segment.start).abs() <= TIMING_EPSILON_SECONDS
+        && (segment.start - previous.end).abs() <= TIMING_EPSILON_SECONDS
 }
 
 fn looks_like_repetition_loop_run(
@@ -1979,6 +1993,41 @@ fn looks_like_repetition_loop_run(
     })
 }
 
+fn looks_like_zero_duration_repetition_loop_run(
+    segments: &[TranscriptSegment],
+    start: usize,
+    end: usize,
+) -> bool {
+    const MIN_LOOP_REPETITIONS: usize = 3;
+    const MAX_REPEATED_WORDS: usize = 6;
+    const MAX_REPEATED_CHARS: usize = 60;
+    const MAX_SEGMENT_DURATION_SECONDS: f64 = 4.0;
+
+    let run_len = end - start;
+    if run_len < MIN_LOOP_REPETITIONS {
+        return false;
+    }
+
+    let first = &segments[start];
+    let word_count = normalized_repetition_key(&first.text)
+        .split_whitespace()
+        .count();
+    if word_count == 0
+        || word_count > MAX_REPEATED_WORDS
+        || first.text.chars().count() > MAX_REPEATED_CHARS
+    {
+        return false;
+    }
+    if !has_reliable_segment_timing(first) || first.end - first.start > MAX_SEGMENT_DURATION_SECONDS
+    {
+        return false;
+    }
+
+    segments[start + 1..end]
+        .iter()
+        .all(|segment| has_zero_duration_boundary_timing(first, segment))
+}
+
 fn filter_repetition_loops(
     segments: Vec<TranscriptSegment>,
 ) -> (Vec<TranscriptSegment>, RepetitionFilterSummary) {
@@ -2001,6 +2050,11 @@ fn filter_repetition_loops(
 
         if looks_like_repetition_loop_run(&segments, index, end) {
             summary.candidates += 1;
+            filtered.push(segments[index].clone());
+            summary.removed_segments += end - index - 1;
+        } else if looks_like_zero_duration_repetition_loop_run(&segments, index, end) {
+            summary.candidates += 1;
+            summary.zero_duration_loops += 1;
             filtered.push(segments[index].clone());
             summary.removed_segments += end - index - 1;
         } else {
@@ -2324,6 +2378,7 @@ mod tests {
 
         assert_eq!(repetition_filter.candidates, 1);
         assert_eq!(repetition_filter.removed_segments, 4);
+        assert_eq!(repetition_filter.zero_duration_loops, 0);
         assert_eq!(transcript.segments.len(), 3);
         assert_eq!(
             transcript.text,
@@ -2343,6 +2398,7 @@ mod tests {
         .expect("double repetition fixture parses");
 
         assert_eq!(repetition_filter.removed_segments, 0);
+        assert_eq!(repetition_filter.zero_duration_loops, 0);
         assert_eq!(transcript.segments.len(), 2);
         assert_eq!(transcript.text, "To je pomembno. To je pomembno.");
     }
@@ -2360,6 +2416,7 @@ mod tests {
         .expect("spaced repetition fixture parses");
 
         assert_eq!(repetition_filter.removed_segments, 0);
+        assert_eq!(repetition_filter.zero_duration_loops, 0);
         assert_eq!(transcript.segments.len(), 3);
         assert_eq!(
             transcript.text,
@@ -2370,13 +2427,78 @@ mod tests {
     #[test]
     fn preserves_natural_repeated_words_inside_segment() {
         let (transcript, _, repetition_filter) = parse_fixture(
-            r#"{"segments":[{"start":0.0,"end":1.0,"text":"ne, ne, ne","words":[{"word":"ne,","start":0.0,"end":0.2},{"word":" ne,","start":0.3,"end":0.5},{"word":" ne","start":0.6,"end":0.8}]}]}"#.as_bytes(),
+            r#"{"segments":[{"start":0.0,"end":2.0,"text":"Ne, ne, ne, tega nisem mislil tako.","words":[{"word":"Ne,","start":0.0,"end":0.2},{"word":" ne,","start":0.3,"end":0.5},{"word":" ne,","start":0.6,"end":0.8},{"word":" tega","start":0.9,"end":1.1},{"word":" nisem","start":1.1,"end":1.3},{"word":" mislil","start":1.3,"end":1.6},{"word":" tako.","start":1.6,"end":2.0}]}]}"#.as_bytes(),
         )
         .expect("natural repeated words fixture parses");
 
         assert_eq!(repetition_filter.removed_segments, 0);
-        assert_eq!(transcript.text, "ne, ne, ne");
+        assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(transcript.text, "Ne, ne, ne, tega nisem mislil tako.");
         assert_eq!(transcript.segments.len(), 1);
+    }
+
+    #[test]
+    fn filters_zero_duration_duplicate_repetition_tail() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":134.66,"end":138.66,"text":"Pa bom povedal, kaj je."},
+                {"start":138.66,"end":139.66,"text":"Gre za vprašanje človeške ustvarjalnosti."},
+                {"start":139.66,"end":139.66,"text":"Gre za vprašanje človeške ustvarjalnosti."},
+                {"start":139.66,"end":139.66,"text":"Gre za vprašanje človeške ustvarjalnosti."},
+                {"start":139.66,"end":139.66,"text":"Gre za vprašanje človeške ustvarjalnosti."},
+                {"start":141.66,"end":154.52,"text":"Oziroma, začeli so s tem."}
+            ]}"#
+            .as_bytes(),
+        )
+        .expect("zero-duration repetition fixture parses");
+
+        assert_eq!(repetition_filter.candidates, 1);
+        assert_eq!(repetition_filter.removed_segments, 3);
+        assert_eq!(repetition_filter.zero_duration_loops, 1);
+        assert_eq!(transcript.segments.len(), 3);
+        assert_eq!(transcript.segments[1].start, 138.66);
+        assert_eq!(transcript.segments[1].end, 139.66);
+        assert_eq!(
+            transcript.text,
+            "Pa bom povedal, kaj je. Gre za vprašanje človeške ustvarjalnosti. Oziroma, začeli so s tem."
+        );
+    }
+
+    #[test]
+    fn preserves_zero_duration_non_identical_segments() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":10.0,"end":11.0,"text":"Prvi stavek."},
+                {"start":11.0,"end":11.0,"text":"Drugi stavek."},
+                {"start":11.0,"end":11.0,"text":"Tretji stavek."},
+                {"start":11.0,"end":11.0,"text":"Četrti stavek."}
+            ]}"#
+            .as_bytes(),
+        )
+        .expect("non-identical zero-duration fixture parses");
+
+        assert_eq!(repetition_filter.candidates, 0);
+        assert_eq!(repetition_filter.removed_segments, 0);
+        assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(transcript.segments.len(), 4);
+    }
+
+    #[test]
+    fn preserves_two_identical_zero_duration_segments() {
+        let (transcript, _, repetition_filter) = parse_fixture(
+            r#"{"segments":[
+                {"start":10.0,"end":11.0,"text":"To je pomembno."},
+                {"start":11.0,"end":11.0,"text":"To je pomembno."}
+            ]}"#
+            .as_bytes(),
+        )
+        .expect("two zero-duration repetition fixture parses");
+
+        assert_eq!(repetition_filter.candidates, 0);
+        assert_eq!(repetition_filter.removed_segments, 0);
+        assert_eq!(repetition_filter.zero_duration_loops, 0);
+        assert_eq!(transcript.segments.len(), 2);
+        assert_eq!(transcript.text, "To je pomembno. To je pomembno.");
     }
 
     #[test]
@@ -2392,6 +2514,7 @@ mod tests {
         .expect("unicode repetition fixture parses");
 
         assert_eq!(repetition_filter.removed_segments, 2);
+        assert_eq!(repetition_filter.zero_duration_loops, 0);
         assert_eq!(transcript.text, "Č š ž, prav? Vamo videti.");
         assert_eq!(transcript.segments[0].text, "Č š ž, prav?");
         assert_eq!(transcript.segments[1].words[0].start, 5.0);
@@ -4077,13 +4200,18 @@ fn transcribe_recording_blocking(
                     &app,
                     &recording_id,
                     format!(
-                        "stage=parse_repetition_filter candidates={} removed_segments={}",
-                        repetition_filter.candidates, repetition_filter.removed_segments
+                        "stage=parse_repetition_filter candidates={} removed_segments={} zero_duration_loops={}",
+                        repetition_filter.candidates,
+                        repetition_filter.removed_segments,
+                        repetition_filter.zero_duration_loops
                     ),
                 );
                 eprintln!(
-                    "Scribe transcription: repetition filter recording_id={} candidates={} removed_segments={}",
-                    recording_id, repetition_filter.candidates, repetition_filter.removed_segments
+                    "Scribe transcription: repetition filter recording_id={} candidates={} removed_segments={} zero_duration_loops={}",
+                    recording_id,
+                    repetition_filter.candidates,
+                    repetition_filter.removed_segments,
+                    repetition_filter.zero_duration_loops
                 );
             }
             append_transcription_diagnostic(

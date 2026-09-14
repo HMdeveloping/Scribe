@@ -259,6 +259,7 @@ const en = {
   whatsNew0112FollowLayout: "Improved the transcript follow button layout",
   whatsNew0113ViewportLayout: "Improved the app layout at different window sizes",
   whatsNew0114RepetitionHallucinations: "Improved prevention of repeated transcript sections",
+  whatsNew0115ZeroDurationLoops: "Improved transcription reliability for rare repeated zero-duration phrase loops",
   welcomeToScribe: "Welcome to Scribe",
   onboardingWelcomeCopy: "Record, import, and transcribe audio with a local-first workspace.",
   onboardingRecordImport: "Record or import audio",
@@ -417,6 +418,19 @@ const whatsNew0114Translations: Record<AppLanguage, Pick<Dictionary, "whatsNew01
   pl: { whatsNew0114RepetitionHallucinations: "Ulepszone zapobieganie powtarzającym się fragmentom transkrypcji." },
 };
 
+const whatsNew0115Translations: Record<AppLanguage, Pick<Dictionary, "whatsNew0115ZeroDurationLoops">> = {
+  sl: { whatsNew0115ZeroDurationLoops: "Izboljšana zanesljivost prepisovanja pri redkih ponavljajočih se frazah brez trajanja." },
+  en: { whatsNew0115ZeroDurationLoops: "Improved transcription reliability for rare repeated zero-duration phrase loops." },
+  de: { whatsNew0115ZeroDurationLoops: "Verbesserte Transkriptionszuverlässigkeit bei seltenen wiederholten Phrasen ohne Dauer." },
+  es: { whatsNew0115ZeroDurationLoops: "Fiabilidad de transcripción mejorada para bucles raros de frases repetidas sin duración." },
+  it: { whatsNew0115ZeroDurationLoops: "Affidabilità della trascrizione migliorata per rari loop di frasi ripetute a durata zero." },
+  hr: { whatsNew0115ZeroDurationLoops: "Poboljšana pouzdanost transkripcije za rijetke ponavljajuće fraze bez trajanja." },
+  fr: { whatsNew0115ZeroDurationLoops: "Fiabilité de transcription améliorée pour les rares boucles de phrases répétées sans durée." },
+  pt: { whatsNew0115ZeroDurationLoops: "Fiabilidade da transcrição melhorada para raros ciclos de frases repetidas sem duração." },
+  nl: { whatsNew0115ZeroDurationLoops: "Betrouwbaardere transcriptie voor zeldzame herhaalde zinslussen zonder duur." },
+  pl: { whatsNew0115ZeroDurationLoops: "Poprawiono niezawodność transkrypcji dla rzadkich pętli powtarzanych fraz bez czasu trwania." },
+};
+
 const updaterErrorTranslations: Record<AppLanguage, Partial<Dictionary>> = {
   en: {},
   sl: {
@@ -563,6 +577,7 @@ for (const language of languages) {
   Object.assign(dictionaries[language.code], whatsNew0112Translations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0113Translations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0114Translations[language.code]);
+  Object.assign(dictionaries[language.code], whatsNew0115Translations[language.code]);
   Object.assign(dictionaries[language.code], updaterErrorTranslations[language.code]);
   if (language.code !== "en") Object.assign(dictionaries[language.code], v01ProgressTranslations[language.code], onboardingTranslations[language.code], modelRecoveryTranslations[language.code], reliabilityTranslations[language.code]);
 }
