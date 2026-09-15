@@ -288,9 +288,12 @@ jobs:
           tar_path="$macos_dir/Scribe.app.tar.gz"
           test -d "$macos_dir/Scribe.app"
           tar -C "$macos_dir" -czf "$tar_path" Scribe.app
-          ./node_modules/.bin/tauri signer sign "$tar_path" > "$tar_path.sig"
+          ./node_modules/.bin/tauri signer sign "$tar_path" \
+            | awk '/^Public signature:/{getline; print; exit}' \
+            | tr -d '\r\n[:space:]' > "$tar_path.sig"
           test -s "$tar_path"
           test -s "$tar_path.sig"
+          ! grep -Eq 'Your file was signed successfully|Public signature:|Make sure to include' "$tar_path.sig"
 
       - name: Verify final macOS app and updater icon resources
         if: matrix.target == 'aarch64-apple-darwin'
@@ -569,8 +572,8 @@ jobs:
 
           mac_tar_name="$(basename "$mac_tar")"
           win_exe_name="$(basename "$win_exe")"
-          mac_signature="$(tr -d '\r\n' < "$mac_sig")"
-          win_signature="$(tr -d '\r\n' < "$win_sig")"
+          mac_signature="$(tr -d '\r\n[:space:]' < "$mac_sig")"
+          win_signature="$(tr -d '\r\n[:space:]' < "$win_sig")"
 
           if [ -z "$mac_signature" ]; then
             echo "macOS updater signature is empty"
@@ -580,6 +583,20 @@ jobs:
             echo "Windows updater signature is empty"
             exit 1
           fi
+          for signature in "$mac_sig" "$win_sig"; do
+            if grep -Eq 'Your file was signed successfully|Public signature:|Make sure to include|[[:space:]]' "$signature"; then
+              echo "Updater signature contains prose or whitespace: $signature"
+              exit 1
+            fi
+            if ! printf '%s' "$(cat "$signature")" | base64 --decode >/dev/null 2>&1; then
+              echo "Updater signature is not valid base64: $signature"
+              exit 1
+            fi
+          done
+
+          updater_pubkey="$(jq -r '.plugins.updater.pubkey' src-tauri/tauri.conf.json)"
+          node scripts/verify-updater-signature.mjs "$mac_tar" "$mac_sig" "$updater_pubkey"
+          node scripts/verify-updater-signature.mjs "$win_exe" "$win_sig" "$updater_pubkey"
 
           jq -n \
             --arg version "$release_version" \
@@ -618,6 +635,31 @@ jobs:
             (.platforms["windows-x86_64-nsis"].url | endswith(".exe")) and
             (.platforms["windows-x86_64-nsis"].signature | length > 0)
           ' --arg version "$release_version" release-upload/latest.json
+          jq -e \
+            --arg mac_name "$mac_tar_name" \
+            --arg mac_signature "$mac_signature" \
+            --arg win_name "$win_exe_name" \
+            --arg win_signature "$win_signature" \
+            '(.platforms["darwin-aarch64"].url | endswith($mac_name)) and
+             .platforms["darwin-aarch64"].signature == $mac_signature and
+             (.platforms["windows-x86_64"].url | endswith($win_name)) and
+             .platforms["windows-x86_64"].signature == $win_signature and
+             .platforms["windows-x86_64-nsis"].signature == $win_signature' \
+            release-upload/latest.json
+          jq -r '.platforms[].signature' release-upload/latest.json | while IFS= read -r signature; do
+            if [ "$signature" != "$(printf '%s' "$signature" | tr -d '\r\n[:space:]')" ]; then
+              echo "Manifest signature contains whitespace"
+              exit 1
+            fi
+            if grep -Eq 'Your file was signed successfully|Public signature:|Make sure to include' <<< "$signature"; then
+              echo "Manifest signature contains signer prose"
+              exit 1
+            fi
+            printf '%s' "$signature" | base64 --decode >/dev/null 2>&1 || {
+              echo "Manifest signature is not valid base64"
+              exit 1
+            }
+          done
 
           echo "Prepared release assets:"
           find release-upload -maxdepth 1 -type f -print | sort
