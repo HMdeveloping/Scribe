@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "id": "private-jambrek-lecture-1",
+      "enabled": true,
+      "audioEnv": "SCRIBE_DIARIZATION_PRIVATE_AUDIO",
+      "defaultAudioPath": "$HOME/Scribe-ASR-Benchmark/repetition-cases/Jambrekovo predavanje 1.m4a",
+      "language": "sl",
+      "category": "private_long_lecture",
+      "notes": "Private local lecture. Never copy this audio into the repository.",
+      "openingGate": {
+        "description": "Known opening semantic sequence is A -> B -> A: lecturer, short student interjection, lecturer resumes.",
+        "expectedSequence": ["A", "B", "A"],
+        "maxFirstSwitchSeconds": 180,
+        "maxSecondSwitchSeconds": 240
+      }
+    },
+    {
+      "id": "fixture-aba",
+      "enabled": true,
+      "fixtureDurationSeconds": 12,
+      "language": "sl",
+      "category": "harness_self_test",
+      "openingGate": {
+        "description": "Synthetic harness self-test with an A -> B -> A opening.",
+        "expectedSequence": ["A", "B", "A"],
+        "expectedTurns": [
+          { "start": 0, "end": 4, "speaker": "A" },
+          { "start": 4, "end": 5.2, "speaker": "B" },
+          { "start": 5.2, "end": 12, "speaker": "A" }
+        ]
+      }
+    }
+  ],
+  "engines": [
+    {
+      "id": "fixture-aba",
+      "label": "Fixture A-B-A self-test",
+      "type": "fixture",
+      "enabled": true,
+      "sampleIds": ["fixture-aba"]
+    },
+    {
+      "id": "external-json",
+      "label": "External diarization JSON adapter",
+      "type": "external-json",
+      "enabled": true,
+      "commandEnv": "SCRIBE_DIARIZATION_ENGINE",
+      "args": ["--audio", "{audio}", "--output", "{output}", "--sample-id", "{sampleId}", "--language", "{language}"],
+      "notes": "Command must write JSON containing speakerTurns or turns: [{ start, end, speaker, confidence? }]."
+    },
+    {
+      "id": "pyannote-community-1-auto",
+      "label": "pyannote Community-1 automatic",
+      "type": "external-json",
+      "enabled": true,
+      "commandEnv": "SCRIBE_DIARIZATION_PYANNOTE_ADAPTER",
+      "args": ["--audio", "{audio}", "--output", "{output}", "--sample-id", "{sampleId}", "--mode", "auto"],
+      "notes": "Uses pyannote/speaker-diarization-community-1 locally when model access is available."
+    },
+    {
+      "id": "pyannote-community-1-speakers-2",
+      "label": "pyannote Community-1 num_speakers=2",
+      "type": "external-json",
+      "enabled": true,
+      "commandEnv": "SCRIBE_DIARIZATION_PYANNOTE_ADAPTER",
+      "args": ["--audio", "{audio}", "--output", "{output}", "--sample-id", "{sampleId}", "--mode", "num_speakers_2"],
+      "notes": "Uses pyannote/speaker-diarization-community-1 with num_speakers=2 when supported."
+    },
+    {
+      "id": "nemo-sortformer-4spk-v1",
+      "label": "NVIDIA NeMo Sortformer 4spk v1",
+      "type": "external-json",
+      "enabled": true,
+      "commandEnv": "SCRIBE_DIARIZATION_SORTFORMER_ADAPTER",
+      "args": ["--audio", "{audio}", "--output", "{output}", "--sample-id", "{sampleId}", "--model", "nvidia/diar_sortformer_4spk-v1"],
+      "notes": "Offline/batch Sortformer adapter. Requires NeMo research environment."
+    }
+  ]
+}

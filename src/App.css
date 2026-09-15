@@ -2705,6 +2705,20 @@ button {
   margin-top: 20px;
 }
 
+.transcript-paragraph--diarized + .transcript-paragraph--diarized {
+  margin-top: 30px;
+}
+
+.transcript-readability-break {
+  display: inline;
+}
+
+.transcript-readability-break::before {
+  content: "";
+  display: block;
+  height: 0.35em;
+}
+
 .transcript-word {
   display: inline;
   padding: 0;

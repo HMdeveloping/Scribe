@@ -41,11 +41,19 @@ export type TranscriptSegment = {
   words?: TranscriptWord[];
 };
 
+export type SpeakerTurn = {
+  start: number;
+  end: number;
+  speaker: string | number;
+  confidence?: number;
+};
+
 export type TranscriptData = {
   version: 1 | 2;
   language: string;
   text: string;
   segments: TranscriptSegment[];
+  speakerTurns?: SpeakerTurn[];
 };
 
 type SaveRecordingResult = {
@@ -448,15 +456,18 @@ type FlatWord = {
   text: string;
   start: number;
   end: number;
+  readabilityBreakBefore?: boolean;
 };
 
 type TranscriptParagraphWord = FlatWord & {
   flatIndex: number;
+  readabilityBreakBefore?: boolean;
 };
 
 type TranscriptParagraph = {
   id: string;
   words: TranscriptParagraphWord[];
+  diarized?: boolean;
 };
 
 type FollowMode = "following" | "suspendedByUser";
@@ -469,6 +480,7 @@ const STRONG_PARAGRAPH_GAP_SECONDS = 3;
 const SENTENCE_PAUSE_SECONDS = 1.25;
 const MAX_PARAGRAPH_WORDS = 110;
 const MAX_PARAGRAPH_SENTENCES = 6;
+const SPEAKER_ASSIGNMENT_GAP_TOLERANCE_SECONDS = 0.35;
 
 function buildFlatWordIndex(segments: TranscriptSegment[]): FlatWord[] {
   const flat: FlatWord[] = [];
@@ -480,6 +492,52 @@ function buildFlatWordIndex(segments: TranscriptSegment[]): FlatWord[] {
     });
   });
   return flat;
+}
+
+type WordSpeakerAssignment = {
+  speaker: string;
+  turnDuration: number;
+} | null;
+
+function overlapSeconds(left: { start: number; end: number }, right: { start: number; end: number }): number {
+  return Math.max(0, Math.min(left.end, right.end) - Math.max(left.start, right.start));
+}
+
+function normalizedSpeakerTurns(speakerTurns: SpeakerTurn[] | undefined): SpeakerTurn[] {
+  return (speakerTurns ?? [])
+    .map((turn) => ({
+      ...turn,
+      start: Number(turn.start),
+      end: Number(turn.end),
+      speaker: String(turn.speaker),
+    }))
+    .filter((turn) => Number.isFinite(turn.start) && Number.isFinite(turn.end) && turn.end > turn.start && String(turn.speaker).length > 0)
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+}
+
+function assignWordSpeaker(word: FlatWord, speakerTurns: SpeakerTurn[]): WordSpeakerAssignment {
+  if (speakerTurns.length === 0 || word.end <= word.start) return null;
+
+  const overlapping = speakerTurns
+    .map((turn) => ({ turn, overlap: overlapSeconds(word, turn) }))
+    .filter((item) => item.overlap > 0)
+    .sort((left, right) => right.overlap - left.overlap || (right.turn.end - right.turn.start) - (left.turn.end - left.turn.start));
+
+  const selectedTurn = overlapping[0]?.turn ?? (() => {
+    const midpoint = (word.start + word.end) / 2;
+    const containing = speakerTurns.find((turn) => midpoint >= turn.start && midpoint <= turn.end);
+    if (containing) return containing;
+    return speakerTurns
+      .map((turn) => ({ turn, distance: Math.min(Math.abs(word.start - turn.end), Math.abs(word.end - turn.start)) }))
+      .filter((item) => item.distance <= SPEAKER_ASSIGNMENT_GAP_TOLERANCE_SECONDS)
+      .sort((left, right) => left.distance - right.distance)[0]?.turn ?? null;
+  })();
+
+  if (!selectedTurn) return null;
+  return {
+    speaker: String(selectedTurn.speaker),
+    turnDuration: selectedTurn.end - selectedTurn.start,
+  };
 }
 
 function buildTranscriptParagraphs(segments: TranscriptSegment[], flatWords: FlatWord[]): TranscriptParagraph[] {
@@ -495,6 +553,7 @@ function buildTranscriptParagraphs(segments: TranscriptSegment[], flatWords: Fla
     paragraphs.push({
       id: `paragraph-${first.segmentIndex}-${first.wordIndex}-${last.segmentIndex}-${last.wordIndex}`,
       words: current,
+      diarized: false,
     });
     current = [];
     currentSentenceCount = 0;
@@ -504,10 +563,10 @@ function buildTranscriptParagraphs(segments: TranscriptSegment[], flatWords: Fla
     if (previousWord) {
       const gap = word.start - previousWord.end;
       const previousEndsSentence = endsWithSentencePunctuation(previousWord.text);
-      const shouldBreak = gap >= STRONG_PARAGRAPH_GAP_SECONDS
+      const readabilityBreak = gap >= STRONG_PARAGRAPH_GAP_SECONDS
         || (gap >= SENTENCE_PAUSE_SECONDS && previousEndsSentence)
         || (previousEndsSentence && (current.length >= MAX_PARAGRAPH_WORDS || currentSentenceCount >= MAX_PARAGRAPH_SENTENCES));
-      if (shouldBreak) pushCurrent();
+      if (readabilityBreak) pushCurrent();
     }
 
     current.push({ ...word, flatIndex });
@@ -569,6 +628,11 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
   const containerRef = useRef<HTMLDivElement>(null);
   const flatWords = useMemo(() => buildFlatWordIndex(transcript.segments), [transcript.segments]);
   const paragraphs = useMemo(() => buildTranscriptParagraphs(transcript.segments, flatWords), [flatWords, transcript.segments]);
+  const speakerTurns = useMemo(() => normalizedSpeakerTurns(transcript.speakerTurns), [transcript.speakerTurns]);
+  const speakerAssignments = useMemo(
+    () => speakerTurns.length > 0 ? flatWords.map((word) => assignWordSpeaker(word, speakerTurns)) : [],
+    [flatWords, speakerTurns],
+  );
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
   const lastIndexRef = useRef(-1);
   const animationFrameRef = useRef<number | null>(null);
@@ -615,6 +679,55 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
   useEffect(() => {
     updateActiveWord(player.currentTime);
   }, [player.currentTime, updateActiveWord]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.metaKey || !event.shiftKey || event.key.toLowerCase() !== "d") return;
+      event.preventDefault();
+      const index = lastIndexRef.current;
+      const wordAt = (wordIndex: number) => {
+        const word = flatWords[wordIndex];
+        if (!word) return null;
+        return {
+          index: wordIndex,
+          text: word.text,
+          start: word.start,
+          end: word.end,
+          assignedSpeaker: speakerAssignments[wordIndex]?.speaker ?? null,
+        };
+      };
+      const paragraphIndex = paragraphs.findIndex((paragraph) => paragraph.words.some((word) => word.flatIndex === index));
+      const boundaryBefore = paragraphIndex > 0 && paragraphs[paragraphIndex].words[0]?.flatIndex === index;
+      const boundaryAfter = paragraphIndex >= 0 && paragraphIndex < paragraphs.length - 1
+        && paragraphs[paragraphIndex + 1].words[0]?.flatIndex === index + 1;
+      const active = flatWords[index];
+      const nearestTurns = active
+        ? speakerTurns
+          .map((turn) => ({ turn, distance: Math.min(Math.abs(active.start - turn.end), Math.abs(active.end - turn.start)) }))
+          .sort((left, right) => left.distance - right.distance)
+          .slice(0, 3)
+          .map(({ turn }) => ({ speaker: turn.speaker, start: turn.start, end: turn.end }))
+        : [];
+      console.info("[scribe playback forensic snapshot]", {
+        audioCurrentTime: player.readCurrentTime(),
+        activeWordIndex: index,
+        activeWord: wordAt(index),
+        previousWord: wordAt(index - 1),
+        nextWord: wordAt(index + 1),
+        activeAssignedSpeaker: speakerAssignments[index]?.speaker ?? null,
+        previousAssignedSpeaker: speakerAssignments[index - 1]?.speaker ?? null,
+        nextAssignedSpeaker: speakerAssignments[index + 1]?.speaker ?? null,
+        paragraphIndex,
+        speakerBoundaryImmediatelyBefore: boundaryBefore,
+        speakerBoundaryImmediatelyAfter: boundaryAfter,
+        nearestSpeakerTurns: nearestTurns,
+        window: Array.from({ length: 7 }, (_, offset) => wordAt(index + offset - 3)).filter(Boolean),
+      });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [flatWords, paragraphs, player, speakerAssignments, speakerTurns]);
 
   useEffect(() => () => {
     if (programmaticScrollTimeoutRef.current !== null) {
@@ -704,6 +817,12 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
 
   const hasTimedWords = flatWords.length > 0;
 
+  useEffect(() => {
+    if (import.meta.env.DEV && transcript.speakerTurns?.length) {
+      console.info("[diarization-ux-test] speaker-turn paragraph data loaded", { speakerTurnCount: transcript.speakerTurns.length });
+    }
+  }, [transcript.speakerTurns]);
+
   return (
     <div className="transcript-content-wrapper">
       {!hasTimedWords && (
@@ -720,14 +839,14 @@ function TranscriptContent({ transcript, player, t }: { transcript: TranscriptDa
           <p
             key={paragraph.id}
             ref={paragraph.words.some((word) => word.flatIndex === activeWordIndex) ? activeParagraphRef : null}
-            className="transcript-paragraph"
+            className={`transcript-paragraph${paragraph.diarized ? " transcript-paragraph--diarized" : ""}`}
           >
             {paragraph.words.map((word, wordIndex) => {
                 const isActive = word.flatIndex === activeWordIndex;
                 const timedWord = word.flatIndex >= 0 ? flatWords[word.flatIndex] : null;
                 const isClickable = timedWord !== null;
                 return (
-                  <span key={`word-wrap-${word.segmentIndex}-${word.wordIndex}-${wordIndex}`}>
+                  <span key={`word-wrap-${word.segmentIndex}-${word.wordIndex}-${wordIndex}`} className={word.readabilityBreakBefore ? "transcript-readability-break" : undefined}>
                     {wordIndex > 0 ? " " : ""}
                     <span
                       ref={isActive ? activeWordRef : null}

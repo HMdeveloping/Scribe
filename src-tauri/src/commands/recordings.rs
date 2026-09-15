@@ -173,6 +173,16 @@ pub struct TranscriptWord {
     end: f64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeakerTurn {
+    start: f64,
+    end: f64,
+    speaker: serde_json::Value,
+    #[serde(default)]
+    confidence: Option<f64>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptData {
@@ -180,6 +190,8 @@ pub struct TranscriptData {
     language: String,
     text: String,
     segments: Vec<TranscriptSegment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    speaker_turns: Vec<SpeakerTurn>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1415,6 +1427,40 @@ fn append_transcription_diagnostic(app: &AppHandle, recording_id: &str, line: im
     }
 }
 
+fn preserve_forensic_json(app: &AppHandle, recording_id: &str, suffix: &str, source: &Path) {
+    let Some(dir) = diagnostics_dir(app).ok() else {
+        return;
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let timestamp = unix_timestamp_seconds();
+    let destination = dir.join(format!(
+        "transcription-{}-{}-{}.json",
+        timestamp,
+        safe_diagnostic_recording_id(recording_id),
+        suffix
+    ));
+    let _ = std::fs::copy(source, destination);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let mut artifacts = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("transcription-") && name.ends_with(".json"))
+        })
+        .collect::<Vec<_>>();
+    artifacts.sort();
+    let remove_count = artifacts.len().saturating_sub(20);
+    for path in artifacts.into_iter().take(remove_count) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 fn copy_with_progress(
     app: &AppHandle,
     import_id: &str,
@@ -2215,7 +2261,7 @@ fn detect_decoder_loops(segments: &[TranscriptSegment]) -> Vec<DecoderLoopCandid
     const MIN_SIMILARITY: f64 = 0.92;
     const MAX_ADJACENT_GAP_SECONDS: f64 = 1.0;
 
-    let mut candidates = Vec::new();
+    let mut candidates = detect_two_segment_decoder_loops(segments);
     let mut index = 0;
     while index < segments.len() {
         let base = &segments[index];
@@ -2275,6 +2321,68 @@ fn detect_decoder_loops(segments: &[TranscriptSegment]) -> Vec<DecoderLoopCandid
     candidates
 }
 
+fn detect_two_segment_decoder_loops(segments: &[TranscriptSegment]) -> Vec<DecoderLoopCandidate> {
+    const MIN_DURATION_SECONDS: f64 = 10.0;
+    const MIN_WORDS: usize = 18;
+    const MIN_SIMILARITY: f64 = 0.72;
+    const MIN_SHARED_WORDS: usize = 12;
+    const MAX_ADJACENT_GAP_SECONDS: f64 = 1.0;
+
+    let mut candidates = Vec::new();
+    for (index, pair) in segments.windows(2).enumerate() {
+        let first = &pair[0];
+        let second = &pair[1];
+        if !has_reliable_segment_timing(first)
+            || !has_reliable_segment_timing(second)
+            || first.end - first.start < MIN_DURATION_SECONDS
+            || second.end - second.start < MIN_DURATION_SECONDS
+        {
+            continue;
+        }
+        let gap = second.start - first.end;
+        if !(gap >= -0.05 && gap <= MAX_ADJACENT_GAP_SECONDS) {
+            continue;
+        }
+        // Leave runs of three or more to the established detector below.
+        let extends_left = index > 0
+            && lexical_similarity(&segments[index - 1].text, &first.text) >= MIN_SIMILARITY
+            && segments[index - 1].start <= first.start;
+        let extends_right = index + 2 < segments.len()
+            && lexical_similarity(&second.text, &segments[index + 2].text) >= MIN_SIMILARITY
+            && segments[index + 2].start >= second.start;
+        if extends_left || extends_right {
+            continue;
+        }
+        let first_tokens = normalized_repetition_key(&first.text)
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let second_tokens = normalized_repetition_key(&second.text)
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if first_tokens.len() < MIN_WORDS || second_tokens.len() < MIN_WORDS {
+            continue;
+        }
+        let shared_words = first_tokens
+            .iter()
+            .filter(|token| second_tokens.contains(token))
+            .count();
+        if shared_words < MIN_SHARED_WORDS
+            || lexical_similarity(&first.text, &second.text) < MIN_SIMILARITY
+        {
+            continue;
+        }
+        candidates.push(DecoderLoopCandidate {
+            start_index: index,
+            end_index: index + 2,
+            start_time: first.start,
+            end_time: second.end,
+        });
+    }
+    candidates
+}
+
 fn offset_segments(mut segments: Vec<TranscriptSegment>, offset: f64) -> Vec<TranscriptSegment> {
     for segment in &mut segments {
         segment.start += offset;
@@ -2287,15 +2395,48 @@ fn offset_segments(mut segments: Vec<TranscriptSegment>, offset: f64) -> Vec<Tra
     segments
 }
 
-fn trim_segments_to_window(
+fn clip_segments_to_window(
     segments: Vec<TranscriptSegment>,
     start: f64,
     end: f64,
 ) -> Vec<TranscriptSegment> {
     segments
         .into_iter()
-        .filter(|segment| {
-            has_reliable_segment_timing(segment) && segment.start >= start && segment.end <= end
+        .filter_map(|mut segment| {
+            if !has_reliable_segment_timing(&segment)
+                || segment.end <= start
+                || segment.start >= end
+            {
+                return None;
+            }
+            let words = segment
+                .words
+                .into_iter()
+                .filter(|word| {
+                    let midpoint = (word.start + word.end) / 2.0;
+                    midpoint >= start && midpoint <= end
+                })
+                .collect::<Vec<_>>();
+            if words.is_empty() {
+                return None;
+            }
+            segment.start = words
+                .first()
+                .map(|word| word.start)
+                .unwrap_or(segment.start);
+            segment.end = words.last().map(|word| word.end).unwrap_or(segment.end);
+            segment.text = words
+                .iter()
+                .map(|word| word.text.trim())
+                .filter(|word| !word.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            segment.words = words;
+            if segment.end <= segment.start || segment.text.is_empty() {
+                None
+            } else {
+                Some(segment)
+            }
         })
         .collect()
 }
@@ -2372,6 +2513,7 @@ fn run_whisper_with_args(
 }
 
 struct DecoderLoopRecoveryContext<'a> {
+    app: &'a AppHandle,
     ffmpeg: &'a Path,
     whisper_cli: &'a Path,
     model_path: &'a Path,
@@ -2465,10 +2607,17 @@ fn recover_decoder_loops(
             .map(|(segments, _)| offset_segments(segments, clip_start));
         let retry_segments = match retry_segments {
             Ok(segments) => {
-                trim_segments_to_window(segments, candidate.start_time, candidate.end_time)
+                clip_segments_to_window(segments, candidate.start_time, candidate.end_time)
             }
             Err(_) => Vec::new(),
         };
+
+        preserve_forensic_json(
+            context.app,
+            context.model_id,
+            "recovery-whisper",
+            &retry_json,
+        );
 
         let _ = std::fs::remove_file(&retry_wav);
         let _ = std::fs::remove_file(&retry_json);
@@ -2518,6 +2667,7 @@ fn transcript_from_segments(
             language: language.to_string(),
             text,
             segments,
+            speaker_turns: Vec::new(),
         },
         repetition_filter,
     )
@@ -2921,6 +3071,97 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].start_index, 1);
         assert_eq!(candidates[0].end_index, 4);
+    }
+
+    #[test]
+    fn detects_real_two_segment_advancing_repetition() {
+        let repeated = "Se pravi če imaš ti umetno inteligenca umetno inteligenca ustvarja odgovor statistično verjetnostjo na podlagi tega kar je bila naučena ampak proti argumenti bil ta da se je videl tudi";
+        let segments = vec![
+            test_segment(230.04, 259.50, repeated),
+            test_segment(259.50, 288.96, repeated),
+        ];
+        let candidates = detect_two_segment_decoder_loops(&segments);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].start_time, 230.04);
+        assert_eq!(candidates[0].end_time, 288.96);
+    }
+
+    fn timed_segment(start: f64, end: f64, words: &[(f64, f64, &str)]) -> TranscriptSegment {
+        TranscriptSegment {
+            start,
+            end,
+            text: words
+                .iter()
+                .map(|(_, _, text)| *text)
+                .collect::<Vec<_>>()
+                .join(" "),
+            words: words
+                .iter()
+                .map(|(word_start, word_end, text)| TranscriptWord {
+                    start: *word_start,
+                    end: *word_end,
+                    text: (*text).to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn clips_recovery_words_at_both_splice_boundaries() {
+        let segment = timed_segment(
+            8.0,
+            42.0,
+            &[
+                (8.0, 12.0, "before"),
+                (18.0, 19.5, "left"),
+                (21.0, 24.0, "inside"),
+                (38.0, 41.0, "right"),
+                (41.0, 42.0, "after"),
+            ],
+        );
+        let clipped = clip_segments_to_window(vec![segment], 20.0, 40.0);
+        assert_eq!(clipped.len(), 1);
+        assert_eq!(clipped[0].text, "inside right");
+        assert_eq!((clipped[0].start, clipped[0].end), (21.0, 41.0));
+        assert!(segments_have_reliable_monotonic_timing(&clipped));
+    }
+
+    #[test]
+    fn clips_crossing_left_boundary_without_hole_or_duplicate() {
+        let segment = timed_segment(
+            225.04,
+            234.04,
+            &[
+                (225.04, 227.28, "Na podlagi"),
+                (227.28, 229.57, "Ampak proti argumenti"),
+                (229.57, 230.03, "tudi."),
+                (230.10, 231.20, "vse"),
+                (231.20, 232.20, "ljudje"),
+                (232.20, 234.04, "tudi"),
+            ],
+        );
+        let clipped = clip_segments_to_window(vec![segment], 230.04, 288.96);
+        assert_eq!(clipped.len(), 1);
+        assert_eq!(clipped[0].text, "vse ljudje tudi");
+        assert_eq!(clipped[0].start, 230.10);
+        assert_eq!(clipped[0].end, 234.04);
+    }
+
+    #[test]
+    fn excludes_fully_outside_and_zero_word_segments() {
+        let before = timed_segment(0.0, 2.0, &[(0.0, 1.0, "before")]);
+        let crossing_without_tail = timed_segment(8.0, 12.0, &[(8.0, 9.0, "before")]);
+        let clipped = clip_segments_to_window(vec![before, crossing_without_tail], 10.0, 20.0);
+        assert!(clipped.is_empty());
+    }
+
+    #[test]
+    fn does_not_detect_short_intentional_two_segment_repetition() {
+        let segments = vec![
+            test_segment(0.0, 1.0, "To je pomembno."),
+            test_segment(1.1, 2.1, "Ja to je pomembno."),
+        ];
+        assert!(detect_two_segment_decoder_loops(&segments).is_empty());
     }
 
     #[test]
@@ -4877,6 +5118,7 @@ fn transcribe_recording_blocking(
         Some(metadata.duration_seconds),
     );
 
+    preserve_forensic_json(&app, &recording_id, "raw-whisper", &whisper_output_json);
     let transcript = match parse_whisper_segments_with_sanitization(&whisper_output_json) {
         Ok((segments, sanitization)) => {
             if let Some(summary) = sanitization {
@@ -4906,6 +5148,7 @@ fn transcribe_recording_blocking(
                 ),
             );
             let recovery_context = DecoderLoopRecoveryContext {
+                app: &app,
                 ffmpeg: &ffmpeg,
                 whisper_cli: &whisper_cli,
                 model_path: &model_path,

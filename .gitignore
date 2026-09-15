@@ -63,6 +63,15 @@ tests/asr-benchmark/results/*
 tests/asr-benchmark/adapters/__pycache__/
 tests/asr-benchmark/adapters/*.pyc
 
+# Local diarization benchmark data and generated reports.
+tests/diarization-benchmark/audio/*
+!tests/diarization-benchmark/audio/.gitkeep
+tests/diarization-benchmark/results/*
+!tests/diarization-benchmark/results/.gitkeep
+tests/diarization-benchmark/research-env/
+tests/diarization-benchmark/adapters/__pycache__/
+tests/diarization-benchmark/adapters/*.pyc
+
 # Keep checked-in Tauri icon assets visible despite binary ignores.
 !src-tauri/icons/*.ico
 !src-tauri/icons/*.icns
