@@ -5,7 +5,6 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -5571,63 +5570,22 @@ fn transcribe_recording_blocking_inner(
         production_diagnostics,
         cancel,
     )?;
-    let whisper_output = std::process::Output {
-        status: std::process::ExitStatus::from_raw(0),
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-    };
-
-    if !whisper_output.status.success() {
-        append_transcription_diagnostic(
-            &app,
-            &recording_id,
-            format!(
-                "stage=whisper_final result=failed exit={:?} output_json={} output_json_exists={} output_json_size={:?} stdout_summary={} stderr_summary={} frontend_error=WhisperFailed",
-                whisper_output.status.code(),
-                whisper_output_json.display(),
-                whisper_output_json.exists(),
-                file_size(&whisper_output_json),
-                summarize_process_output(&whisper_output.stdout).replace('\n', "\\n"),
-                summarize_process_output(&whisper_output.stderr).replace('\n', "\\n")
-            ),
-        );
-        eprintln!(
-            "Scribe transcription: whisper failed recording_id={} source={} exit={:?} output_json={} output_json_exists={} output_json_size={:?} stdout={} stderr={}",
-            recording_id,
-            if is_imported { "imported" } else { "microphone" },
-            whisper_output.status.code(),
-            whisper_output_json.display(),
-            whisper_output_json.exists(),
-            file_size(&whisper_output_json),
-            summarize_process_output(&whisper_output.stdout),
-            summarize_process_output(&whisper_output.stderr)
-        );
-        return Err(TranscriptionError::WhisperFailed(
-            "whisper.cpp could not transcribe this recording.".to_string(),
-        ));
-    }
     eprintln!(
-        "Scribe transcription: whisper succeeded recording_id={} source={} exit={:?} output_json={} output_json_exists={} output_json_size={:?} stdout={} stderr={}",
+        "Scribe transcription: whisper succeeded recording_id={} source={} output_json={} output_json_exists={} output_json_size={:?}",
         recording_id,
         if is_imported { "imported" } else { "microphone" },
-        whisper_output.status.code(),
         whisper_output_json.display(),
         whisper_output_json.exists(),
         file_size(&whisper_output_json),
-        summarize_process_output(&whisper_output.stdout),
-        summarize_process_output(&whisper_output.stderr)
     );
     append_transcription_diagnostic(
         &app,
         &recording_id,
         format!(
-            "stage=whisper_final result=succeeded exit={:?} output_json={} output_json_exists={} output_json_size={:?} stdout_summary={} stderr_summary={}",
-            whisper_output.status.code(),
+            "stage=whisper_final result=succeeded output_json={} output_json_exists={} output_json_size={:?}",
             whisper_output_json.display(),
             whisper_output_json.exists(),
             file_size(&whisper_output_json),
-            summarize_process_output(&whisper_output.stdout).replace('\n', "\\n"),
-            summarize_process_output(&whisper_output.stderr).replace('\n', "\\n")
         ),
     );
 
