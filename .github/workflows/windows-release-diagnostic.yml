@@ -1,0 +1,101 @@
+name: Windows Release Diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic:
+    name: Windows NSIS diagnostic
+    runs-on: windows-latest
+    env:
+      WHISPER_CPP_REF: v1.7.6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Prepare Windows runtime binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install cmake --yes --no-progress
+          $runtimeDir = "src-tauri/resources/bin/x86_64-pc-windows-msvc"
+          $ffmpegZip = "$env:RUNNER_TEMP\ffmpeg-win64-lgpl.zip"
+          $ffmpegDir = "$env:RUNNER_TEMP\ffmpeg-win64-lgpl"
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip" -OutFile $ffmpegZip
+          Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegDir
+          $ffmpegPath = (Get-ChildItem -Path $ffmpegDir -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName
+          $ffprobePath = (Get-ChildItem -Path $ffmpegDir -Recurse -Filter ffprobe.exe | Select-Object -First 1).FullName
+          if (-not $ffmpegPath) { throw "Unable to find ffmpeg.exe in LGPL Windows FFmpeg archive" }
+          if (-not $ffprobePath) { throw "Unable to find ffprobe.exe in LGPL Windows FFmpeg archive" }
+          git clone --depth 1 --branch $env:WHISPER_CPP_REF https://github.com/ggml-org/whisper.cpp.git "$env:RUNNER_TEMP\whisper.cpp"
+          cmake -S "$env:RUNNER_TEMP\whisper.cpp" -B "$env:RUNNER_TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON
+          cmake --build "$env:RUNNER_TEMP\whisper.cpp\build" --config Release --target whisper-cli
+          $env:FFMPEG_PATH = $ffmpegPath
+          $env:FFPROBE_PATH = $ffprobePath
+          $candidates = @(
+            "$env:RUNNER_TEMP\whisper.cpp\build\bin\Release\whisper-cli.exe",
+            "$env:RUNNER_TEMP\whisper.cpp\build\bin\whisper-cli.exe",
+            "$env:RUNNER_TEMP\whisper.cpp\build\examples\cli\Release\whisper-cli.exe"
+          )
+          $env:WHISPER_CLI_PATH = ($candidates | Where-Object { Test-Path $_ } | Select-Object -First 1)
+          if (-not $env:WHISPER_CLI_PATH) { throw "Unable to find built whisper-cli.exe" }
+          node scripts/stage-runtime-binaries.mjs "x86_64-pc-windows-msvc"
+
+      - name: Capture safe staging diagnostics
+        shell: pwsh
+        run: |
+          $diag = [System.Collections.Generic.List[string]]::new()
+          $runtimeDir = "src-tauri/resources/bin/x86_64-pc-windows-msvc"
+          $diag.Add("node=$(node --version)")
+          $diag.Add("npm=$(npm --version)")
+          $diag.Add("rustc=$(rustc --version)")
+          $diag.Add("cargo=$(cargo --version)")
+          $diag.Add("tauri=$(npm run tauri -- --version 2>&1)")
+          $diag.Add("target=x86_64-pc-windows-msvc")
+          $diag.Add("runtimeDir=$runtimeDir")
+          $diag.Add("runtimeDirExists=$(Test-Path $runtimeDir)")
+          Get-ChildItem -Path $runtimeDir -File | ForEach-Object { $diag.Add("file=$($_.Name) size=$($_.Length)") }
+          $diag.Add("ffmpegExists=$(Test-Path $runtimeDir/ffmpeg.exe)")
+          $diag.Add("ffprobeExists=$(Test-Path $runtimeDir/ffprobe.exe)")
+          $diag.Add("whisperCliExists=$(Test-Path $runtimeDir/whisper-cli.exe)")
+          $diag.Add("signingKeyConfigured=$([bool]$env:TAURI_SIGNING_PRIVATE_KEY)")
+          $diag.Add("signingPasswordConfigured=$([bool]$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)")
+          $diag | Tee-Object -FilePath "$env:RUNNER_TEMP\windows-build-diagnostic.txt"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Build Windows release bundle (diagnostic)
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          npm run tauri build -- --bundles nsis 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\windows-build-diagnostic.txt" -Append
+          $exitCode = $LASTEXITCODE
+          "BUILD_EXIT_CODE=$exitCode" | Tee-Object -FilePath "$env:RUNNER_TEMP\windows-build-diagnostic.txt" -Append
+          exit $exitCode
+
+      - name: Upload safe diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-diagnostic
+          path: ${{ runner.temp }}/windows-build-diagnostic.txt
+          if-no-files-found: warn
