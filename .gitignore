@@ -72,6 +72,11 @@ tests/diarization-benchmark/research-env/
 tests/diarization-benchmark/adapters/__pycache__/
 tests/diarization-benchmark/adapters/*.pyc
 
+# Keep transcription-quality configs and generated benchmark output private.
+tests/transcription-quality/benchmark-config.json
+tests/transcription-quality/ground-truth.json
+tests/transcription-quality/private/
+
 # Keep checked-in Tauri icon assets visible despite binary ignores.
 !src-tauri/icons/*.ico
 !src-tauri/icons/*.icns

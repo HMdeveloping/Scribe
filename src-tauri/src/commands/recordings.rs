@@ -1,11 +1,13 @@
+use crate::transcription_runtime::{canonical_ffmpeg_args, TranscriptionRuntimeContext};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
@@ -21,6 +23,47 @@ const SUPPORTED_LANGUAGES: &[&str] = &["sl", "en", "de", "es", "it", "hr", "fr",
 const TRANSCRIPTION_DIAGNOSTIC_HISTORY_LIMIT: usize = 20;
 static ACTIVE_MODEL_DOWNLOAD: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static CANCELLED_MODEL_DOWNLOADS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+struct TranscriptionCancellationState {
+    active: HashMap<(String, String), crate::transcription_chunking::CancellationHandle>,
+    pending: HashSet<(String, String)>,
+}
+impl TranscriptionCancellationState {
+    fn register(
+        &mut self,
+        key: (String, String),
+        token: crate::transcription_chunking::CancellationHandle,
+    ) {
+        let cancelled_before_registration = self.pending.remove(&key);
+        self.active.insert(key, token.clone());
+        if cancelled_before_registration {
+            token.cancel();
+        }
+    }
+
+    fn request_cancel(&mut self, key: (String, String)) {
+        if let Some(token) = self.active.get(&key) {
+            token.cancel();
+        } else {
+            self.pending.insert(key);
+        }
+    }
+
+    fn finish(&mut self, key: &(String, String)) {
+        self.active.remove(key);
+        self.pending.remove(key);
+    }
+}
+static TRANSCRIPTION_CANCELLATIONS: OnceLock<Mutex<TranscriptionCancellationState>> =
+    OnceLock::new();
+
+fn active_transcription_cancellations() -> &'static Mutex<TranscriptionCancellationState> {
+    TRANSCRIPTION_CANCELLATIONS.get_or_init(|| {
+        Mutex::new(TranscriptionCancellationState {
+            active: HashMap::new(),
+            pending: HashSet::new(),
+        })
+    })
+}
 
 struct WhisperModelDefinition {
     id: &'static str,
@@ -291,6 +334,7 @@ pub enum TranscriptionError {
     TranscriptUnavailable(String),
     InvalidRecording(String),
     Io(String),
+    Cancelled,
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -2792,10 +2836,222 @@ fn parse_whisper_segments_with_sanitization(
     Ok((segments, sanitization))
 }
 
+pub(crate) fn parse_whisper_output_for_runtime(
+    path: &Path,
+) -> Result<Vec<crate::transcription_runtime::ParsedTranscriptionWord>, TranscriptionError> {
+    let (segments, _) = parse_whisper_segments_with_sanitization(path)?;
+    Ok(segments
+        .into_iter()
+        .flat_map(|segment| segment.words.into_iter())
+        .map(
+            |word| crate::transcription_runtime::ParsedTranscriptionWord {
+                text: word.text,
+                start: word.start,
+                end: word.end,
+            },
+        )
+        .collect())
+}
+
+fn run_production_c0(
+    app: &AppHandle,
+    context: &TranscriptionRuntimeContext,
+    whisper_output_json: &Path,
+    run_id: &str,
+    diagnostics: Option<&crate::transcription_runtime::ProductionC0DiagnosticSink>,
+    cancel: crate::transcription_chunking::CancellationHandle,
+) -> Result<(), TranscriptionError> {
+    struct C0WorkCleanup(PathBuf);
+    impl Drop for C0WorkCleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let work_dir =
+        crate::transcription_runtime::production_c0_work_dir(&context.recording_dir, run_id)
+            .map_err(TranscriptionError::Io)?;
+    let _cleanup = C0WorkCleanup(work_dir.clone());
+    let bytes = std::fs::read(&context.processing_wav).map_err(|error| {
+        TranscriptionError::Io(format!("Unable to read canonical audio: {error}"))
+    })?;
+    let source = crate::transcription_chunking::source_audio_from_canonical_wav(&bytes)
+        .map_err(|error| TranscriptionError::Io(error.to_string()))?;
+    if let Some(sink) = diagnostics {
+        let mut event = sink.event("CANONICALIZATION_COMPLETED");
+        event.canonical_frames = Some(source.frames);
+        sink.emit(event);
+    }
+    let mut extractor = crate::transcription_chunking::RealChunkExtractor {
+        ffmpeg: context.ffmpeg.clone(),
+        input: context.processing_wav.clone(),
+        output_dir: work_dir.join("chunks"),
+        cancel: cancel.clone(),
+    };
+    let mut inference = crate::transcription_chunking::RealChunkInferenceRunner {
+        whisper_cli: context.whisper_cli.clone(),
+        model: context.model_path.clone(),
+        language: context.language.clone(),
+        output_dir: work_dir.join("whisper"),
+        cancel: cancel.clone(),
+    };
+    std::fs::create_dir_all(&extractor.output_dir)
+        .map_err(|error| TranscriptionError::Io(error.to_string()))?;
+    std::fs::create_dir_all(&inference.output_dir)
+        .map_err(|error| TranscriptionError::Io(error.to_string()))?;
+    let mut completed = 0usize;
+    let total = source.chunks().len();
+    let recording_id = context.recording_id.clone();
+    let mut observer = |event: crate::transcription_chunking::DevObservation| {
+        if event.stage == "whisper" && event.outcome == "success" {
+            completed += 1;
+        }
+        let stage = if event.stage == "merge" {
+            "finalizing"
+        } else {
+            "transcribing"
+        };
+        emit_transcription_progress(app, &recording_id, stage, None);
+        if let Some(sink) = diagnostics {
+            let name = match (event.stage, event.outcome, event.attempt) {
+                ("extraction", "start", _) => "CHUNK_EXTRACTION_STARTED",
+                ("extraction", "success", _) => "CHUNK_EXTRACTION_SUCCEEDED",
+                ("whisper", "start", Some("normal")) => "PRIMARY_INFERENCE_STARTED",
+                ("whisper", "success", Some("normal")) => "PRIMARY_INFERENCE_SUCCEEDED",
+                ("whisper", "start", Some("cpu_fallback")) => "CPU_FALLBACK_STARTED",
+                ("whisper", "success", Some("cpu_fallback")) => "CPU_FALLBACK_SUCCEEDED",
+                ("owner_remap", "success", _) => "OWNER_REMAP_COMPLETED",
+                ("merge", "success", _) => "PRIMARY_MERGE_COMPLETED",
+                _ => "C0_EVENT",
+            };
+            let mut diagnostic = sink.event(name);
+            diagnostic.chunk_index = event.chunk.map(|value| value as usize);
+            diagnostic.total_chunks = Some(event.total_chunks);
+            diagnostic.start_frame = event.owner_start_frame;
+            diagnostic.end_frame = event.owner_end_frame;
+            diagnostic.merged_word_count = event.word_count;
+            diagnostic.parsed_word_count = event.word_count;
+            if event.stage == "owner_remap" {
+                diagnostic.owned_word_count = event.word_count;
+            }
+            sink.emit(diagnostic);
+            if event.stage == "whisper" && event.outcome == "success" {
+                let mut parsed = sink.event("PARSER_COMPLETED");
+                parsed.chunk_index = event.chunk.map(|value| value as usize);
+                parsed.total_chunks = Some(event.total_chunks);
+                parsed.parsed_word_count = event.word_count;
+                sink.emit(parsed);
+            }
+        }
+        let _ = total;
+    };
+    let merged = crate::transcription_chunking::orchestrate_primary_observed(
+        source,
+        &mut extractor,
+        &mut inference,
+        &cancel,
+        &mut observer,
+    )
+    .map_err(|error| {
+        if error == "cancelled" {
+            TranscriptionError::Cancelled
+        } else {
+            TranscriptionError::WhisperFailed(error.to_string())
+        }
+    })?;
+    if let Some(sink) = diagnostics {
+        let mut event = sink.event("PRIMARY_MERGE_COMPLETED");
+        event.total_chunks = Some(total);
+        event.merged_word_count = Some(merged.words.len());
+        sink.emit(event);
+    }
+    let segments = merged
+        .words
+        .into_iter()
+        .map(|word| {
+            serde_json::json!({
+                "start": word.timing.start,
+                "end": word.timing.end,
+                "text": word.text,
+                "words": [{"text": word.text, "start": word.timing.start, "end": word.timing.end}]
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = serde_json::json!({"segments": segments});
+    std::fs::write(
+        whisper_output_json,
+        serde_json::to_vec_pretty(&payload)
+            .map_err(|error| TranscriptionError::Io(error.to_string()))?,
+    )
+    .map_err(|error| TranscriptionError::Io(error.to_string()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn cancellation_key(recording: &str, run: &str) -> (String, String) {
+        (recording.to_string(), run.to_string())
+    }
+
+    #[test]
+    fn cancellation_before_registration_is_consumed_by_exact_run() {
+        let mut state = TranscriptionCancellationState {
+            active: HashMap::new(),
+            pending: HashSet::new(),
+        };
+        state.request_cancel(cancellation_key("recording", "run-a"));
+        let token =
+            std::sync::Arc::new(crate::transcription_chunking::CancellationToken::default());
+        state.register(cancellation_key("recording", "run-a"), token.clone());
+        assert!(token.is_cancelled());
+        assert!(state.pending.is_empty());
+    }
+
+    #[test]
+    fn cancellation_registration_race_has_no_lost_request() {
+        let mut state = TranscriptionCancellationState {
+            active: HashMap::new(),
+            pending: HashSet::new(),
+        };
+        let token =
+            std::sync::Arc::new(crate::transcription_chunking::CancellationToken::default());
+        state.register(cancellation_key("recording", "run-a"), token.clone());
+        state.request_cancel(cancellation_key("recording", "run-a"));
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn stale_completed_run_cancellation_cannot_poison_next_run() {
+        let mut state = TranscriptionCancellationState {
+            active: HashMap::new(),
+            pending: HashSet::new(),
+        };
+        let run_a =
+            std::sync::Arc::new(crate::transcription_chunking::CancellationToken::default());
+        state.register(cancellation_key("recording", "run-a"), run_a.clone());
+        state.finish(&cancellation_key("recording", "run-a"));
+        state.request_cancel(cancellation_key("recording", "run-a"));
+        let run_b =
+            std::sync::Arc::new(crate::transcription_chunking::CancellationToken::default());
+        state.register(cancellation_key("recording", "run-b"), run_b.clone());
+        assert!(!run_b.is_cancelled());
+        state.finish(&cancellation_key("recording", "run-a"));
+    }
+
+    #[test]
+    fn cancellation_state_isolated_by_recording_and_run() {
+        let mut state = TranscriptionCancellationState {
+            active: HashMap::new(),
+            pending: HashSet::new(),
+        };
+        state.request_cancel(cancellation_key("recording-a", "run-a"));
+        let other =
+            std::sync::Arc::new(crate::transcription_chunking::CancellationToken::default());
+        state.register(cancellation_key("recording-b", "run-b"), other.clone());
+        assert!(!other.is_cancelled());
+    }
 
     static TEST_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -2848,6 +3104,29 @@ mod tests {
 
         assert_eq!(sanitization, None);
         assert_eq!(transcript.text, "č š ž Č Š Ž");
+    }
+
+    #[test]
+    fn c0_output_schema_bridges_into_the_existing_parser() {
+        let path = write_whisper_fixture(
+            br#"{"segments":[{"start":2.0,"end":3.0,"text":" pozdrav ","words":[{"text":"pozdrav","start":2.0,"end":3.0}]}]}"#,
+        );
+        let words = parse_whisper_output_for_runtime(&path).expect("C0 schema parses");
+        let _ = std::fs::remove_file(path);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].text, "pozdrav");
+        assert_eq!(words[0].start, 2.0);
+        assert_eq!(words[0].end, 3.0);
+    }
+
+    #[test]
+    fn existing_parser_accepts_c0_output_with_empty_words_array() {
+        let (transcript, _, _) = parse_fixture(
+            br#"{"segments":[{"start":0.0,"end":1.0,"text":"legacy"},{"start":1.0,"end":2.0,"text":"bridge","words":[]}]}"#,
+        )
+        .expect("existing parser remains compatible");
+        assert_eq!(transcript.text, "legacy bridge");
+        assert_eq!(transcript.segments.len(), 2);
     }
 
     #[test]
@@ -4698,15 +4977,303 @@ pub fn delete_whisper_model(app: AppHandle, model_id: String) -> Result<Settings
 pub async fn transcribe_recording(
     app: AppHandle,
     recording_id: String,
+    run_id: String,
 ) -> Result<TranscriptData, TranscriptionError> {
-    tauri::async_runtime::spawn_blocking(move || transcribe_recording_blocking(app, recording_id))
-        .await
-        .map_err(|error| TranscriptionError::Io(format!("Transcription task failed: {error}")))?
+    if !is_valid_recording_id(&recording_id) {
+        return Err(TranscriptionError::InvalidRecording(
+            "Invalid recording id".to_string(),
+        ));
+    }
+    let cancel = std::sync::Arc::new(crate::transcription_chunking::CancellationToken::default());
+    let key = (recording_id.clone(), run_id.clone());
+    {
+        let mut cancellation_state = active_transcription_cancellations().lock().map_err(|_| {
+            TranscriptionError::Io("Unable to register transcription cancellation".into())
+        })?;
+        cancellation_state.register(key.clone(), cancel.clone());
+    }
+    let active_key = key;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        transcribe_recording_blocking(app, recording_id, run_id, cancel)
+    })
+    .await
+    .map_err(|error| TranscriptionError::Io(format!("Transcription task failed: {error}")))?;
+    let _ = active_transcription_cancellations()
+        .lock()
+        .map(|mut state| {
+            state.finish(&active_key);
+        });
+    result
+}
+
+#[tauri::command]
+pub fn cancel_transcription(recording_id: String, run_id: String) -> Result<(), String> {
+    let mut state = active_transcription_cancellations()
+        .lock()
+        .map_err(|_| "Unable to access transcription cancellation state".to_string())?;
+    state.request_cancel((recording_id, run_id));
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChunkedDevResult {
+    pub recording_id: String,
+    pub run_id: String,
+    pub canonical_frames: u64,
+    pub chunk_count: usize,
+    pub merged_word_count: usize,
+    pub cancelled: bool,
+    pub runtime_ms: u128,
+    pub candidate_workspace: String,
+    pub merged_words: Vec<crate::transcription_runtime::ParsedTranscriptionWord>,
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn transcribe_recording_chunked_dev(
+    app: AppHandle,
+    recording_id: String,
+) -> Result<ChunkedDevResult, String> {
+    if !is_valid_recording_id(&recording_id) {
+        return Err("Invalid recording id".into());
+    }
+    let ffmpeg = resolve_ffmpeg(&app).map_err(|e| format!("{e:?}"))?;
+    let ffprobe = resolve_ffprobe(&app).map_err(|e| format!("{e:?}"))?;
+    let whisper_cli = resolve_whisper_cli(&app).map_err(|e| format!("{e:?}"))?;
+    let model_path = resolve_whisper_model(&app).map_err(|e| format!("{e:?}"))?;
+    let settings = load_or_create_settings(&app);
+    let language = if is_supported_language(&settings.transcription_language) {
+        settings.transcription_language
+    } else {
+        DEFAULT_TRANSCRIPTION_LANGUAGE.to_string()
+    };
+    let recording_dir = recording_dir_for_id(&app, &recording_id).map_err(|e| e.to_string())?;
+    let metadata_path = recording_dir.join("recording.json");
+    let metadata: RecordingMetadata =
+        serde_json::from_str(&std::fs::read_to_string(&metadata_path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let source = audio_path_from_metadata(&recording_dir, &metadata).map_err(|e| e.to_string())?;
+    if !source.is_file() {
+        return Err("Recording audio is missing".into());
+    }
+    let context = TranscriptionRuntimeContext::from_resolved(
+        recording_id.clone(),
+        source,
+        recording_dir.clone(),
+        recording_dir.join("processing.wav"),
+        ffmpeg,
+        ffprobe,
+        whisper_cli,
+        model_path.clone(),
+        language.clone(),
+    );
+    let run_id = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    );
+    let started = std::time::Instant::now();
+    let paths = crate::transcription_chunking::DevRunPaths::new(&context.recording_dir, &run_id)
+        .map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&paths.chunks).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&paths.whisper).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&paths.recovery).map_err(|e| e.to_string())?;
+    let provenance =
+        crate::transcription_chunking::DevProvenance::new(&paths, &run_id, &recording_id);
+    let cancel = std::sync::Arc::new(crate::transcription_chunking::CancellationToken::default());
+    let mut terminal =
+        crate::transcription_chunking::DevTerminalGuard::new(provenance.clone(), cancel.clone());
+    macro_rules! dev_try {
+        ($expr:expr) => {{
+            match $expr {
+                Ok(value) => value,
+                Err(error) => {
+                    let message = error.to_string();
+                    let finalization = if message == "cancelled" {
+                        terminal.cancelled()
+                    } else {
+                        terminal.failure(&message)
+                    };
+                    return Err(finalization
+                        .err()
+                        .map_or(message.clone(), |e| format!("{message}; provenance: {e}")));
+                }
+            }
+        }};
+    }
+    dev_try!(provenance.event("RUN_ALLOCATED", None, Some(0.0), None));
+    dev_try!(provenance.event("COMMAND_ENTERED", None, Some(0.0), None));
+    let canonical = paths.root.join("processing.wav");
+    let _ = app.emit(
+        "30S_CHUNKING_DEV",
+        format!("run_id={run_id} recording_id={recording_id} stage=canonicalization_start"),
+    );
+    dev_try!(provenance.event("CANONICALIZATION_STARTED", None, None, None));
+    let mut canonical_cmd = Command::new(&context.ffmpeg);
+    canonical_cmd.args(canonical_ffmpeg_args(&context.source_path, &canonical));
+    let canonical_result = dev_try!(crate::transcription_chunking::run_candidate_child(
+        canonical_cmd,
+        &cancel
+    )
+    .map_err(|e| format!("canonicalization failed: {e}")));
+    if canonical_result.disposition != crate::transcription_chunking::ChildDisposition::Succeeded {
+        let error = "candidate canonicalization did not succeed".to_string();
+        let finalization = if canonical_result.disposition
+            == crate::transcription_chunking::ChildDisposition::Cancelled
+        {
+            terminal.cancelled()
+        } else {
+            terminal.failure(&error)
+        };
+        return Err(finalization
+            .err()
+            .map_or(error.clone(), |e| format!("{error}; provenance: {e}")));
+    }
+    let bytes = dev_try!(std::fs::read(&canonical).map_err(|e| e.to_string()));
+    let source_audio = dev_try!(
+        crate::transcription_chunking::source_audio_from_canonical_wav(&bytes)
+            .map_err(|e| e.to_string())
+    );
+    let total = source_audio.chunks().len();
+    dev_try!(provenance.event("CANONICALIZATION_COMPLETED", None, None, None));
+    dev_try!(provenance.event("GEOMETRY_COMPUTED", None, None, None));
+    let mut completed_chunks = 0usize;
+    let app_for_observer = app.clone();
+    let provenance_for_observer = provenance.clone();
+    let run_for_observer = run_id.clone();
+    let recording_for_observer = recording_id.clone();
+    let mut observer = move |o: crate::transcription_chunking::DevObservation| {
+        if o.stage == "whisper" && o.outcome == "success" {
+            completed_chunks += 1;
+        }
+        let _ = app_for_observer.emit("30S_CHUNKING_DEV", format!("run_id={run_for_observer} recording_id={recording_for_observer} chunk={:?}/{} owner_frames={:?}..{:?} stage={} attempt={:?} result={} words={:?}", o.chunk, o.total_chunks, o.owner_start_frame, o.owner_end_frame, o.stage, o.attempt, o.outcome, o.word_count));
+        let progress = if o.stage == "merge" && o.outcome == "success" {
+            100.0
+        } else {
+            crate::transcription_chunking::progress(completed_chunks, o.total_chunks)
+        };
+        let event = match (o.stage, o.attempt, o.outcome) {
+            ("extraction", _, "start") => "CHUNK_EXTRACTION_STARTED",
+            ("extraction", _, "success") => "CHUNK_EXTRACTION_COMPLETED",
+            ("whisper", Some("normal"), "start") => "WHISPER_NORMAL_STARTED",
+            ("whisper", Some("normal"), "success") => "WHISPER_NORMAL_COMPLETED",
+            ("whisper", Some("cpu_fallback"), "start") => "WHISPER_CPU_FALLBACK_STARTED",
+            ("whisper", Some("cpu_fallback"), "success") => "WHISPER_CPU_FALLBACK_COMPLETED",
+            ("merge", _, "success") => "PRIMARY_MERGE_COMPLETED",
+            ("cancelled", _, "cancelled") => "COMMAND_CANCELLED",
+            _ => "STRUCTURAL_OBSERVATION",
+        };
+        let _ = provenance_for_observer.event(
+            event,
+            o.chunk,
+            Some(progress),
+            (o.outcome == "failure").then_some("candidate_stage_failure"),
+        );
+        let _ = app_for_observer.emit(
+            "transcription-chunked-dev-progress",
+            progress.clamp(0.0, 100.0),
+        );
+    };
+    let mut extractor = crate::transcription_chunking::RealChunkExtractor {
+        ffmpeg: context.ffmpeg.clone(),
+        input: canonical,
+        output_dir: paths.chunks.clone(),
+        cancel: cancel.clone(),
+    };
+    let mut inference = crate::transcription_chunking::RealChunkInferenceRunner {
+        whisper_cli: context.whisper_cli.clone(),
+        model: context.model_path.clone(),
+        language: context.language.clone(),
+        output_dir: paths.whisper.clone(),
+        cancel: cancel.clone(),
+    };
+    dev_try!(provenance.event("PRIMARY_MERGE_STARTED", None, None, None));
+    let merged = dev_try!(crate::transcription_chunking::orchestrate_primary_observed(
+        source_audio,
+        &mut extractor,
+        &mut inference,
+        &cancel,
+        &mut observer,
+    ));
+    let words = merged
+        .words
+        .into_iter()
+        .map(|w| crate::transcription_runtime::ParsedTranscriptionWord {
+            text: w.text,
+            start: w.timing.start,
+            end: w.timing.end,
+        })
+        .collect::<Vec<_>>();
+    let merged_word_count = words.len();
+    let result = ChunkedDevResult {
+        recording_id: recording_id.clone(),
+        run_id: run_id.clone(),
+        canonical_frames: source_audio.frames,
+        chunk_count: total,
+        merged_word_count: words.len(),
+        cancelled: cancel.is_cancelled(),
+        runtime_ms: started.elapsed().as_millis(),
+        candidate_workspace: paths.root.display().to_string(),
+        merged_words: words,
+    };
+    let _ = app.emit(
+        "30S_CHUNKING_DEV",
+        format!("run_id={run_id} recording_id={recording_id} stage=completion chunks={total}"),
+    );
+    terminal.success(source_audio.frames, total, merged_word_count)?;
+    Ok(result)
 }
 
 fn transcribe_recording_blocking(
     app: AppHandle,
     recording_id: String,
+    run_id: String,
+    cancel: crate::transcription_chunking::CancellationHandle,
+) -> Result<TranscriptData, TranscriptionError> {
+    let diagnostics = app_data_dir(&app).ok().map(|root| {
+        crate::transcription_runtime::ProductionC0DiagnosticSink::new(
+            &root.join("diagnostics"),
+            &run_id,
+            &recording_id,
+        )
+    });
+    if let Some(sink) = diagnostics.as_ref() {
+        sink.emit(sink.event("PRODUCTION_TRANSCRIPTION_STARTED"));
+        sink.emit(sink.event("CANONICALIZATION_STARTED"));
+    }
+    let result = transcribe_recording_blocking_inner(
+        app,
+        recording_id.clone(),
+        run_id.clone(),
+        cancel.clone(),
+        diagnostics.as_ref(),
+    );
+    if let Some(sink) = diagnostics.as_ref() {
+        let mut terminal = sink.event("RUN_TERMINAL");
+        terminal.event = "RUN_TERMINAL".to_string();
+        terminal.terminal_outcome = Some(
+            crate::transcription_runtime::terminal_outcome(
+                result.is_ok(),
+                matches!(&result, Err(TranscriptionError::Cancelled)),
+            )
+            .to_string(),
+        );
+        sink.emit(terminal);
+    }
+    result
+}
+
+fn transcribe_recording_blocking_inner(
+    app: AppHandle,
+    recording_id: String,
+    run_id: String,
+    cancel: crate::transcription_chunking::CancellationHandle,
+    production_diagnostics: Option<&crate::transcription_runtime::ProductionC0DiagnosticSink>,
 ) -> Result<TranscriptData, TranscriptionError> {
     reset_transcription_diagnostic(&app, &recording_id);
     if !is_valid_recording_id(&recording_id) {
@@ -4767,6 +5334,18 @@ fn transcribe_recording_blocking(
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or("");
+
+    let runtime_context = TranscriptionRuntimeContext::from_resolved(
+        recording_id.clone(),
+        audio_path.clone(),
+        recording_dir.clone(),
+        processing_wav.clone(),
+        ffmpeg.clone(),
+        ffprobe.clone(),
+        whisper_cli.clone(),
+        model_path.clone(),
+        transcription_language.clone(),
+    );
 
     for stale_path in [&processing_wav, &whisper_output_json] {
         if stale_path.exists() {
@@ -4853,23 +5432,10 @@ fn transcribe_recording_blocking(
         Some(metadata.duration_seconds),
     );
 
-    let ffmpeg_args = vec![
-        "-y".to_string(),
-        "-i".to_string(),
-        audio_path.to_string_lossy().to_string(),
-        "-map".to_string(),
-        "0:a:0".to_string(),
-        "-vn".to_string(),
-        "-ac".to_string(),
-        "1".to_string(),
-        "-ar".to_string(),
-        "16000".to_string(),
-        "-c:a".to_string(),
-        "pcm_s16le".to_string(),
-        "-sample_fmt".to_string(),
-        "s16".to_string(),
-        processing_wav.to_string_lossy().to_string(),
-    ];
+    let ffmpeg_args = canonical_ffmpeg_args(
+        &runtime_context.source_path,
+        &runtime_context.processing_wav,
+    );
     eprintln!(
         "Scribe transcription: ffmpeg path={} exists={} executable={} args={:?} recording_id={} model_id={} audio_path={} processing_wav={}",
         ffmpeg.display(),
@@ -4881,37 +5447,48 @@ fn transcribe_recording_blocking(
         audio_path.display(),
         processing_wav.display()
     );
-    let conversion_output = Command::new(&ffmpeg)
+    if cancel.is_cancelled() {
+        return Err(TranscriptionError::Cancelled);
+    }
+    let mut conversion_command = Command::new(&ffmpeg);
+    conversion_command
         .args(&ffmpeg_args)
-        .output()
-        .map_err(|error| {
-            append_transcription_diagnostic(
-                &app,
-                &recording_id,
-                format!("stage=ffmpeg_start result=failed error={}", error),
-            );
-            TranscriptionError::ConversionFailed(format!("Unable to start FFmpeg: {error}"))
-        })?;
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    let conversion_result =
+        crate::transcription_chunking::run_candidate_child(conversion_command, &cancel).map_err(
+            |error| {
+                append_transcription_diagnostic(
+                    &app,
+                    &recording_id,
+                    format!("stage=ffmpeg_start result=failed error={error}"),
+                );
+                TranscriptionError::ConversionFailed(format!("Unable to start FFmpeg: {error}"))
+            },
+        )?;
 
-    if !conversion_output.status.success() {
+    if conversion_result.disposition == crate::transcription_chunking::ChildDisposition::Cancelled {
+        append_transcription_diagnostic(
+            &app,
+            &recording_id,
+            "stage=ffmpeg result=cancelled".to_string(),
+        );
+        return Err(TranscriptionError::Cancelled);
+    }
+    if conversion_result.disposition != crate::transcription_chunking::ChildDisposition::Succeeded {
         append_transcription_diagnostic(
             &app,
             &recording_id,
             format!(
-                "stage=ffmpeg result=failed exit={:?} processing_wav_exists={} processing_wav_size={:?} stdout_summary={} stderr_summary={}",
-                conversion_output.status.code(),
+                "stage=ffmpeg result=failed exit={:?} processing_wav_exists={} processing_wav_size={:?}",
+                conversion_result.exit_code,
                 processing_wav.exists(),
                 file_size(&processing_wav),
-                summarize_process_output(&conversion_output.stdout).replace('\n', "\\n"),
-                summarize_process_output(&conversion_output.stderr).replace('\n', "\\n")
             ),
         );
         eprintln!(
-            "Scribe transcription: FFmpeg failed recording_id={} exit={:?} stdout={} stderr={}",
-            recording_id,
-            conversion_output.status.code(),
-            summarize_process_output(&conversion_output.stdout),
-            summarize_process_output(&conversion_output.stderr)
+            "Scribe transcription: FFmpeg failed recording_id={} exit={:?}",
+            recording_id, conversion_result.exit_code,
         );
         return Err(TranscriptionError::ConversionFailed(
             "FFmpeg could not convert this recording.".to_string(),
@@ -4931,30 +5508,30 @@ fn transcribe_recording_blocking(
         }
     };
     eprintln!(
-        "Scribe transcription: FFmpeg succeeded recording_id={} exit={:?} processing_wav={} exists={} size={:?} duration_seconds={:?} stdout={} stderr={}",
-        recording_id,
-        conversion_output.status.code(),
+            "Scribe transcription: FFmpeg succeeded recording_id={} exit={:?} processing_wav={} exists={} size={:?} duration_seconds={:?}",
+            recording_id,
+            conversion_result.exit_code,
         processing_wav.display(),
         processing_wav.exists(),
         file_size(&processing_wav),
         processing_wav_duration,
-        summarize_process_output(&conversion_output.stdout),
-        summarize_process_output(&conversion_output.stderr)
-    );
+        );
     append_transcription_diagnostic(
         &app,
         &recording_id,
         format!(
-            "stage=ffmpeg result=succeeded exit={:?} processing_wav={} processing_wav_exists={} processing_wav_size={:?} processing_wav_duration_seconds={:?} stdout_summary={} stderr_summary={}",
-            conversion_output.status.code(),
+            "stage=ffmpeg result=succeeded exit={:?} processing_wav={} processing_wav_exists={} processing_wav_size={:?} processing_wav_duration_seconds={:?}",
+            conversion_result.exit_code,
             processing_wav.display(),
             processing_wav.exists(),
             file_size(&processing_wav),
             processing_wav_duration,
-            summarize_process_output(&conversion_output.stdout).replace('\n', "\\n"),
-            summarize_process_output(&conversion_output.stderr).replace('\n', "\\n")
         ),
     );
+
+    if cancel.is_cancelled() {
+        return Err(TranscriptionError::Cancelled);
+    }
 
     emit_transcription_progress(
         &app,
@@ -4986,76 +5563,19 @@ fn transcribe_recording_blocking(
         audio_path.display(),
         processing_wav.display()
     );
-    let mut whisper_output = Command::new(&whisper_cli)
-        .args(&whisper_args)
-        .output()
-        .map_err(|error| {
-            append_transcription_diagnostic(
-                &app,
-                &recording_id,
-                format!("stage=whisper_first_start result=failed error={}", error),
-            );
-            TranscriptionError::WhisperFailed(format!("Unable to start whisper.cpp: {error}"))
-        })?;
-
-    if !whisper_output.status.success() {
-        append_transcription_diagnostic(
-            &app,
-            &recording_id,
-            format!(
-                "stage=whisper_first result=failed exit={:?} output_json={} output_json_exists={} output_json_size={:?} stdout_summary={} stderr_summary={}",
-                whisper_output.status.code(),
-                whisper_output_json.display(),
-                whisper_output_json.exists(),
-                file_size(&whisper_output_json),
-                summarize_process_output(&whisper_output.stdout).replace('\n', "\\n"),
-                summarize_process_output(&whisper_output.stderr).replace('\n', "\\n")
-            ),
-        );
-        eprintln!(
-            "Scribe transcription: whisper first attempt failed recording_id={} source={} exit={:?} output_json={} output_json_exists={} output_json_size={:?} stdout={} stderr={}",
-            recording_id,
-            if is_imported { "imported" } else { "microphone" },
-            whisper_output.status.code(),
-            whisper_output_json.display(),
-            whisper_output_json.exists(),
-            file_size(&whisper_output_json),
-            summarize_process_output(&whisper_output.stdout),
-            summarize_process_output(&whisper_output.stderr)
-        );
-        let mut cpu_args = whisper_args.clone();
-        cpu_args.insert(0, "-ng".to_string());
-        append_transcription_diagnostic(
-            &app,
-            &recording_id,
-            format!(
-                "stage=whisper_cpu_fallback result=starting output_json={} output_json_exists_before={} output_json_size_before={:?}",
-                whisper_output_json.display(),
-                whisper_output_json.exists(),
-                file_size(&whisper_output_json)
-            ),
-        );
-        eprintln!(
-            "Scribe transcription: retrying whisper without GPU recording_id={} args={:?}",
-            recording_id, cpu_args
-        );
-        whisper_output = Command::new(&whisper_cli)
-            .args(&cpu_args)
-            .output()
-            .map_err(|error| {
-                append_transcription_diagnostic(
-                    &app,
-                    &recording_id,
-                    format!(
-                        "stage=whisper_cpu_fallback_start result=failed error={}",
-                        error
-                    ),
-                );
-                TranscriptionError::WhisperFailed(format!(
-                    "Unable to start whisper.cpp CPU fallback: {error}"
-                ))
-            })?;
-    }
+    run_production_c0(
+        &app,
+        &runtime_context,
+        &whisper_output_json,
+        &run_id,
+        production_diagnostics,
+        cancel,
+    )?;
+    let whisper_output = std::process::Output {
+        status: std::process::ExitStatus::from_raw(0),
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    };
 
     if !whisper_output.status.success() {
         append_transcription_diagnostic(
@@ -5237,6 +5757,17 @@ fn transcribe_recording_blocking(
             return Err(error);
         }
     };
+    if let Some(sink) = production_diagnostics.as_ref() {
+        let mut event = sink.event("DOWNSTREAM_FINALIZATION_COMPLETED");
+        event.merged_word_count = Some(
+            transcript
+                .segments
+                .iter()
+                .map(|segment| segment.words.len())
+                .sum(),
+        );
+        sink.emit(event);
+    }
     let transcript_json = serde_json::to_vec_pretty(&transcript).map_err(|error| {
         append_transcription_diagnostic(
             &app,
@@ -5349,8 +5880,21 @@ fn transcribe_recording_blocking(
             file_size(&transcript_path)
         ),
     );
+    if let Some(sink) = production_diagnostics.as_ref() {
+        let mut event = sink.event("PERSISTENCE_COMPLETED");
+        event.merged_word_count = Some(
+            transcript
+                .segments
+                .iter()
+                .map(|segment| segment.words.len())
+                .sum(),
+        );
+        sink.emit(event);
+    }
 
+    let mut cleanup_completed = true;
     if let Err(error) = std::fs::remove_file(&processing_wav) {
+        cleanup_completed = false;
         append_transcription_diagnostic(
             &app,
             &recording_id,
@@ -5373,6 +5917,7 @@ fn transcribe_recording_blocking(
         );
     }
     if let Err(error) = std::fs::remove_file(&whisper_output_json) {
+        cleanup_completed = false;
         append_transcription_diagnostic(
             &app,
             &recording_id,
@@ -5399,6 +5944,25 @@ fn transcribe_recording_blocking(
         &recording_id,
         "stage=complete result=succeeded frontend_result=Ok",
     );
+    if let Some(sink) = production_diagnostics.as_ref() {
+        let mut cleanup = sink.event(if cleanup_completed {
+            "CLEANUP_COMPLETED"
+        } else {
+            "CLEANUP_FAILED"
+        });
+        cleanup.cleanup_completed = Some(cleanup_completed);
+        sink.emit(cleanup);
+        let mut event = sink.event("RUN_SUCCESS_CLEANUP_STATUS_RECORDED");
+        event.cleanup_completed = Some(cleanup_completed);
+        event.merged_word_count = Some(
+            transcript
+                .segments
+                .iter()
+                .map(|segment| segment.words.len())
+                .sum(),
+        );
+        sink.emit(event);
+    }
 
     Ok(transcript)
 }

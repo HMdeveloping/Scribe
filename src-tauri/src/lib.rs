@@ -1,10 +1,15 @@
 mod commands;
+mod transcription_runtime;
 
+mod transcription_chunking;
+
+#[cfg(debug_assertions)]
+use commands::recordings::transcribe_recording_chunked_dev;
 use commands::recordings::{
     archive_recordings, assign_recording_to_project, assign_recordings_to_project,
-    cancel_whisper_model_download, create_project, delete_project, delete_projects,
-    delete_recordings, delete_whisper_model, download_whisper_model, get_recording,
-    get_transcription_config, import_audio_recording, initialize_library,
+    cancel_transcription, cancel_whisper_model_download, create_project, delete_project,
+    delete_projects, delete_recordings, delete_whisper_model, download_whisper_model,
+    get_recording, get_transcription_config, import_audio_recording, initialize_library,
     initialize_library_on_startup, list_archived_recordings, list_project_recordings,
     list_projects, list_recordings, load_recording_audio, load_scribe_settings, rename_project,
     rename_recording, restore_recordings, save_recording, save_scribe_settings,
@@ -54,7 +59,10 @@ pub fn run() {
             save_recording,
             save_scribe_settings,
             load_recording_audio,
-            transcribe_recording
+            transcribe_recording,
+            cancel_transcription,
+            #[cfg(debug_assertions)]
+            transcribe_recording_chunked_dev
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

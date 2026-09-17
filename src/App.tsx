@@ -345,6 +345,8 @@ function App() {
   });
   const t = useMemo(() => createTranslator(appLanguage), [appLanguage]);
   const activeRecordingProgressIdRef = useRef<string | null>(null);
+  const activeTranscriptionRunRef = useRef<{ recordingId: string; runId: string } | null>(null);
+  const transcriptionCommandStartedRef = useRef(false);
   const activeImportProgressIdRef = useRef<string | null>(null);
   const updateRef = useRef<Update | null>(null);
   const dismissedUpdateVersionRef = useRef<string | null>(null);
@@ -364,6 +366,7 @@ function App() {
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const freshInstallRef = useRef(false);
   const baselinedFreshInstallVersionRef = useRef<string | null>(null);
+
 
   const currentNavEntry = useCallback((): NavEntry => ({
     view,
@@ -737,6 +740,9 @@ function App() {
 
   async function transcribeRecording(nextRecording: RecordingMetadata) {
     console.info("[transcription-ui] attempt start", { recordingId: nextRecording.id });
+    const runId = crypto.randomUUID();
+    activeTranscriptionRunRef.current = { recordingId: nextRecording.id, runId };
+    transcriptionCommandStartedRef.current = false;
     activeRecordingProgressIdRef.current = nextRecording.id;
     activeImportProgressIdRef.current = null;
     setFinalizing(true);
@@ -752,6 +758,7 @@ function App() {
     }
     const selectedModel = currentSettings?.models.find((model) => model.id === currentSettings.settings.whisperModel);
     if (!selectedModel) {
+      activeTranscriptionRunRef.current = null;
       setTranscriptionError({ kind: "model_missing" });
       return;
     }
@@ -762,17 +769,22 @@ function App() {
       whisperDownloads.downloadProgress[selectedModel.id]?.state === "installing"
     );
     if (selectedModelPending) {
+      activeTranscriptionRunRef.current = null;
       setTranscriptionError({ kind: "model_downloading", message: t("modelDownloadingFriendly") });
       return;
     }
     if (!selectedModel.installed) {
+      activeTranscriptionRunRef.current = null;
       setTranscriptionError({ kind: "model_missing" });
       return;
     }
     try {
+      if (activeTranscriptionRunRef.current?.runId !== runId) return;
+      transcriptionCommandStartedRef.current = true;
       console.info("[transcription-ui] invoking transcribe_recording", { recordingId: nextRecording.id });
       const nextTranscript = await invoke<TranscriptData>("transcribe_recording", {
         recordingId: nextRecording.id,
+        runId,
       });
       console.info("[transcription-ui] transcribe_recording success", { recordingId: nextRecording.id });
       setTranscript(nextTranscript);
@@ -783,8 +795,27 @@ function App() {
       void refreshLibrary();
     } catch (reason) {
       console.error("[transcription-ui] transcribe_recording failed", { recordingId: nextRecording.id, reason });
+      activeTranscriptionRunRef.current = null;
+      transcriptionCommandStartedRef.current = false;
       setTranscriptionError(classifyTranscriptionError(reason));
     }
+  }
+
+  async function cancelActiveTranscription() {
+    const active = activeTranscriptionRunRef.current;
+    if (!active) return;
+    if (!transcriptionCommandStartedRef.current) {
+      activeTranscriptionRunRef.current = null;
+      transcriptionCommandStartedRef.current = false;
+      setFinalizing(false);
+      setFinalizingProgress(null);
+      return;
+    }
+    await invoke("cancel_transcription", active);
+    activeTranscriptionRunRef.current = null;
+    transcriptionCommandStartedRef.current = false;
+    setFinalizing(false);
+    setFinalizingProgress(null);
   }
 
   function startRecording(projectId: string | null = null) {
@@ -792,6 +823,8 @@ function App() {
     setFinalizing(false);
     setFinalizingProgress(null);
     activeRecordingProgressIdRef.current = null;
+    activeTranscriptionRunRef.current = null;
+    transcriptionCommandStartedRef.current = false;
     activeImportProgressIdRef.current = null;
     setRecording(null);
     setTranscript(null);
@@ -1283,15 +1316,20 @@ function App() {
           }}
           retryDisabled={transcriptionError?.kind === "model_downloading" && selectedModelStillDownloading}
           onContinue={() => {
+            activeTranscriptionRunRef.current = null;
+            transcriptionCommandStartedRef.current = false;
             setFinalizing(false);
             setFinalizingProgress(null);
             setView("transcript");
           }}
           onOpenTranscriptionSettings={() => {
+            activeTranscriptionRunRef.current = null;
+            transcriptionCommandStartedRef.current = false;
             setFinalizing(false);
             setFinalizingProgress(null);
             openTranscriptionSettings();
           }}
+          onCancel={() => { void cancelActiveTranscription(); }}
         /> : view === "recording" ? (
           <RecordingView key={recordingSessionKey} t={t} projectId={recordingProjectId} onStop={(nextRecording) => {
             setRecording(nextRecording);

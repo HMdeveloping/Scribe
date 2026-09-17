@@ -362,6 +362,7 @@ type FinalizingViewProps = {
   onRetry: () => void;
   onContinue: () => void;
   onOpenTranscriptionSettings: () => void;
+  onCancel: () => void;
   retryDisabled?: boolean;
 };
 
@@ -393,7 +394,7 @@ function formatProgressBytes(bytes: number) {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
-export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, onContinue, onOpenTranscriptionSettings, retryDisabled = false }: FinalizingViewProps) {
+export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, onContinue, onOpenTranscriptionSettings, onCancel, retryDisabled = false }: FinalizingViewProps) {
   if (errorKind) {
     const title = errorKind === "model_missing"
       ? t("transcriptionModelNotInstalledTitle")
@@ -446,6 +447,7 @@ export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, 
     ) : progress?.durationSeconds ? (
       <p>{formatDuration(progress.durationSeconds * 1000)} {t("audio")}</p>
     ) : null}
+    <button className="stop-control" onClick={onCancel}>{t("cancel")}</button>
   </section>;
 }
 
