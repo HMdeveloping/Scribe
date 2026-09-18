@@ -444,7 +444,8 @@ export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, 
     <div className={`work-progress${isDeterminate ? "" : " is-indeterminate"}`}>
       <div style={isDeterminate ? { width: `${Math.max(0, Math.min(100, progress?.percent ?? 0))}%` } : undefined} />
     </div>
-    {isDeterminate ? <p>{Math.round(progress?.percent ?? 0)}%</p> : <p>{t("improvingQuality")}</p>}
+    <p className="transcription-percent">{isDeterminate ? Math.round(Math.max(0, Math.min(100, progress?.percent ?? 0))) : "0"}%</p>
+    <p>{t("improvingQuality")}</p>
     {progress?.downloadedBytes !== undefined ? (
       <p>{formatProgressBytes(progress.downloadedBytes)}{progress.totalBytes ? ` ${t("of")} ${formatProgressBytes(progress.totalBytes)}` : ""}</p>
     ) : progress?.durationSeconds ? (

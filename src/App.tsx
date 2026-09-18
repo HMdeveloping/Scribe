@@ -772,7 +772,7 @@ function App() {
     activeImportProgressIdRef.current = null;
     setFinalizing(true);
     setTranscriptionError(undefined);
-    setFinalizingProgress({ stage: "preparing", durationSeconds: nextRecording.durationSeconds });
+    setFinalizingProgress({ stage: "preparing", durationSeconds: nextRecording.durationSeconds, percent: 0 });
     let currentSettings = settingsData;
     try {
       const refreshedSettings = await invoke<SettingsViewData>("load_scribe_settings");
@@ -834,7 +834,7 @@ function App() {
     const active = activeTranscriptionRunRef.current;
     if (!active) return;
     if (!transcriptionCommandStartedRef.current) {
-      const discardNewRecording = activeTranscriptionOriginRef.current === "new";
+      const discardNewRecording = activeTranscriptionOriginRef.current === "new" || activeTranscriptionOriginRef.current === "imported";
       activeTranscriptionRunRef.current = null;
       activeTranscriptionOriginRef.current = null;
       transcriptionCommandStartedRef.current = false;
@@ -850,7 +850,7 @@ function App() {
     }
     await invoke("cancel_transcription", active);
     await activeTranscriptionPromiseRef.current?.catch(() => undefined);
-    const discardNewRecording = activeTranscriptionOriginRef.current === "new";
+    const discardNewRecording = activeTranscriptionOriginRef.current === "new" || activeTranscriptionOriginRef.current === "imported";
     activeTranscriptionRunRef.current = null;
     activeTranscriptionOriginRef.current = null;
     activeTranscriptionPromiseRef.current = null;

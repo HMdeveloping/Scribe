@@ -212,7 +212,9 @@ export function HomeRecentRecordings({
   }
 
   return (
-    <section className="recent">
+    <section className="recent" onClick={(event) => {
+      if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+    }}>
       <div className="recent-header">
         <h2>{t("recentRecordings")}</h2>
         {recordings.length > 0 ? (
@@ -224,6 +226,9 @@ export function HomeRecentRecordings({
         <div
           ref={listRef}
           className="recording-list selectable-list"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+          }}
           onPointerLeave={() => setSelectionAffordanceHovered(false)}
         >
           <div className="bulk-action-bar">
@@ -439,7 +444,9 @@ export function ProjectsView({
   }
 
   return (
-    <section className="library-view">
+    <section className="library-view" onClick={(event) => {
+      if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+    }}>
       <header className="library-header">
         <div>
           {canGoBack ? <BackButton t={t} onBack={onBack} /> : null}
@@ -628,7 +635,9 @@ export function RecordingsView({
   }
 
   return (
-    <section className="library-view">
+    <section className="library-view" onClick={(event) => {
+      if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+    }}>
       <header className="library-header">
         <div>
           {canGoBack ? <BackButton t={t} onBack={onBack} /> : null}
@@ -641,7 +650,9 @@ export function RecordingsView({
         ) : null}
       </header>
       {recordings.length > 0 ? (
-        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)}>
+        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
+          if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+        }}>
           <div className="bulk-action-bar">
             <button
               className={`selection-circle select-all-control${!showHeaderSelector ? " is-hidden" : ""}${allSelected ? " is-selected" : ""}${someSelected ? " is-indeterminate" : ""}`}
@@ -827,7 +838,9 @@ export function ProjectDetailView({
   }
 
   return (
-    <section className="library-view">
+    <section className="library-view" onClick={(event) => {
+      if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+    }}>
       <header className="library-header">
         <div>
           <BackButton t={t} onBack={onBack} />
@@ -874,7 +887,9 @@ export function ProjectDetailView({
         </div>
       </header>
       {recordings.length > 0 ? (
-        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)}>
+        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
+          if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+        }}>
           <div className="bulk-action-bar">
             <button
               className={`selection-circle select-all-control${!showHeaderSelector ? " is-hidden" : ""}${allSelected ? " is-selected" : ""}${someSelected ? " is-indeterminate" : ""}`}
