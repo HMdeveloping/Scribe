@@ -293,8 +293,21 @@ const en = {
   bestQuality: "Best quality",
   smallDescription: "Fastest, lower accuracy",
   mediumDescription: "Balanced speed and accuracy",
-  turboDescription: "High accuracy with faster processing",
-  largeDescription: "Best accuracy, slower and more demanding",
+  turboDescription: "Faster transcription with good accuracy",
+  largeDescription: "Highest transcription quality, slower and more demanding",
+};
+
+const modelChoiceTranslations: Record<AppLanguage, Pick<Dictionary, "recommended" | "bestQuality" | "turboDescription" | "largeDescription">> = {
+  en: { recommended: "Fast", bestQuality: "Best quality", turboDescription: "Faster transcription with good accuracy", largeDescription: "Highest transcription quality, slower and more demanding" },
+  sl: { recommended: "Hitro", bestQuality: "Najboljša kakovost", turboDescription: "Hitrejši prepis z dobro natančnostjo", largeDescription: "Najvišja kakovost prepisa, počasneje in zahtevnejše" },
+  de: { recommended: "Schnell", bestQuality: "Beste Qualität", turboDescription: "Schnellere Transkription mit guter Genauigkeit", largeDescription: "Höchste Transkriptionsqualität, langsamer und anspruchsvoller" },
+  es: { recommended: "Rápido", bestQuality: "Mejor calidad", turboDescription: "Transcripción más rápida con buena precisión", largeDescription: "Máxima calidad de transcripción, más lenta y exigente" },
+  it: { recommended: "Veloce", bestQuality: "Qualità migliore", turboDescription: "Trascrizione più veloce con buona precisione", largeDescription: "Massima qualità di trascrizione, più lenta e impegnativa" },
+  hr: { recommended: "Brzo", bestQuality: "Najbolja kvaliteta", turboDescription: "Brža transkripcija uz dobru točnost", largeDescription: "Najviša kvaliteta transkripcije, sporije i zahtjevnije" },
+  fr: { recommended: "Rapide", bestQuality: "Meilleure qualité", turboDescription: "Transcription plus rapide avec une bonne précision", largeDescription: "Qualité de transcription maximale, plus lente et exigeante" },
+  pt: { recommended: "Rápido", bestQuality: "Melhor qualidade", turboDescription: "Transcrição mais rápida com boa precisão", largeDescription: "Máxima qualidade de transcrição, mais lenta e exigente" },
+  nl: { recommended: "Snel", bestQuality: "Beste kwaliteit", turboDescription: "Snellere transcriptie met goede nauwkeurigheid", largeDescription: "Hoogste transcriptiekwaliteit, langzamer en veeleisender" },
+  pl: { recommended: "Szybki", bestQuality: "Najlepsza jakość", turboDescription: "Szybsza transkrypcja z dobrą dokładnością", largeDescription: "Najwyższa jakość transkrypcji, wolniejsza i bardziej wymagająca" },
 };
 
 const dictionaries: Record<AppLanguage, Partial<Dictionary>> = {
@@ -634,6 +647,7 @@ const slovenianCompletionTranslations: Partial<Dictionary> = {
 
 for (const language of languages) {
   Object.assign(dictionaries[language.code], whatsNewTranslations[language.code]);
+  Object.assign(dictionaries[language.code], modelChoiceTranslations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0112Translations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0113Translations[language.code]);
   Object.assign(dictionaries[language.code], whatsNew0114Translations[language.code]);
