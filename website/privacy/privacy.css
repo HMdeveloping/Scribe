@@ -1,0 +1,155 @@
+.policy-page {
+  min-height: 100vh;
+  padding: 40px 20px 56px;
+}
+
+.policy-card {
+  width: min(900px, 100%);
+  margin: 0 auto;
+  padding: clamp(28px, 6vw, 72px);
+  border: 1px solid rgba(32, 33, 35, 0.09);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 22px 70px rgba(32, 33, 35, 0.09);
+}
+
+.policy-header {
+  text-align: center;
+}
+
+.policy-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #202124;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.policy-brand img {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+
+.policy-kicker {
+  margin: 34px 0 8px;
+  color: #4f6df5;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.policy-header h1 {
+  font-size: clamp(36px, 6vw, 60px);
+  line-height: 1;
+}
+
+.policy-updated {
+  margin: 14px 0 0;
+  color: #6f7277;
+  font-size: 14px;
+}
+
+.policy-lede {
+  max-width: 650px;
+  margin: 22px auto 0;
+  color: #5f6368;
+  font-size: 18px;
+  line-height: 1.55;
+}
+
+.policy-contents {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 16px;
+  margin: 38px 0 48px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: rgba(79, 109, 245, 0.06);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.policy-contents a {
+  color: #4f6df5;
+  text-decoration: none;
+}
+
+.policy-contents a:hover,
+.policy-footer a:hover {
+  text-decoration: underline;
+}
+
+.policy-card section {
+  scroll-margin-top: 24px;
+}
+
+.policy-card section + section {
+  margin-top: 34px;
+}
+
+.policy-card h2 {
+  margin: 0 0 10px;
+  color: #202124;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+
+.policy-card p,
+.policy-card li {
+  color: #4f5358;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.policy-card p {
+  margin: 0;
+}
+
+.policy-card p + p {
+  margin-top: 12px;
+}
+
+.policy-card ul {
+  margin: 10px 0 12px;
+  padding-left: 22px;
+}
+
+.policy-card li + li {
+  margin-top: 6px;
+}
+
+.policy-card strong {
+  color: #303238;
+}
+
+.policy-card a {
+  color: #405fe6;
+}
+
+.policy-footer {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 48px;
+  color: #4f6df5;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+@media (max-width: 620px) {
+  .policy-page {
+    padding: 16px 10px 28px;
+  }
+
+  .policy-card {
+    border-radius: 20px;
+    padding: 28px 22px 36px;
+  }
+
+  .policy-contents {
+    justify-content: flex-start;
+    margin-bottom: 36px;
+  }
+}
