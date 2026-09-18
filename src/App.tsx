@@ -36,6 +36,7 @@ import {
 } from "./components/RecordingWorkflow";
 import {
   HomeRecentRecordings,
+  isSelectionOwnedClick,
   localizedRecordingTitle,
   MoveToProjectDialog,
   ProjectDialog,
@@ -345,6 +346,7 @@ function App() {
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("auto");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const titlebarToggleRef = useRef<HTMLButtonElement>(null);
+  const homeClearSelectionRef = useRef<() => void>(() => {});
   const [isNarrowSidebarRange, setIsNarrowSidebarRange] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(max-width: 980px)").matches;
@@ -1382,7 +1384,9 @@ function App() {
         </button>
       </aside>
 
-      <main className="main-content">
+      <main className="main-content" onClick={(event) => {
+        if (view === "home" && !isSelectionOwnedClick(event.target)) homeClearSelectionRef.current();
+      }}>
         {finalizing ? <FinalizingView
           errorKind={transcriptionError?.kind}
           errorMessage={transcriptionError?.message}
@@ -1573,6 +1577,7 @@ function App() {
             onDeleteRecordings={deleteRecordings}
             getRecordingActions={recordingActions}
             onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
+            clearSelectionRef={homeClearSelectionRef}
           />
         </div>
         )}

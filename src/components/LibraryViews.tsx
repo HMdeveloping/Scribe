@@ -1,5 +1,5 @@
 import { Archive, AudioLines, Check, FolderClosed, FolderInput, MoreHorizontal, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type MutableRefObject } from "react";
 import { languageLocales, type AppLanguage, type TFunction } from "../i18n";
 import type { Project, RecordingSummary } from "../types/library";
 import type { ContextMenuAction } from "./ContextMenu";
@@ -42,7 +42,7 @@ function reconcileSelectedIds(current: Set<string>, visibleIds: string[]) {
   return new Set([...current].filter((id) => visible.has(id)));
 }
 
-function isSelectionOwnedClick(target: EventTarget | null) {
+export function isSelectionOwnedClick(target: EventTarget | null) {
   return target instanceof Element && Boolean(target.closest(
     "button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true'], .recording-row-shell, .project-row-shell",
   ));
@@ -130,6 +130,7 @@ export function HomeRecentRecordings({
   onDeleteRecordings,
   getRecordingActions,
   onRecordingContextMenu,
+  clearSelectionRef,
 }: {
   recordings: RecordingSummary[];
   t: TFunction;
@@ -141,6 +142,7 @@ export function HomeRecentRecordings({
   onDeleteRecordings: (recordingIds: string[]) => Promise<boolean> | boolean;
   getRecordingActions: (recording: RecordingSummary) => ContextMenuAction[];
   onRecordingContextMenu: (event: MouseEvent, recording: RecordingSummary) => void;
+  clearSelectionRef?: MutableRefObject<() => void>;
 }) {
   const visibleRecordings = recordings.slice(0, 5);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -152,6 +154,12 @@ export function HomeRecentRecordings({
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
+
+  useEffect(() => {
+    if (!clearSelectionRef) return;
+    clearSelectionRef.current = () => setSelectedIds(new Set());
+    return () => { clearSelectionRef.current = () => {}; };
+  }, [clearSelectionRef]);
 
   useEffect(() => {
     setSelectedIds((current) => reconcileSelectedIds(current, visibleIds));
