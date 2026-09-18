@@ -169,9 +169,18 @@ export function useMicrophoneLevel(paused: boolean) {
       } catch (reason) {
         if (import.meta.env.DEV) console.error("Scribe: microphone initialization failed", reason);
         const name = reason instanceof DOMException ? reason.name : "";
-        fail(name === "NotAllowedError" || name === "SecurityError"
+        // getUserMedia's NotAllowedError is the only browser-level result that
+        // supports a permission-denied message. The other DOMException names
+        // describe acquisition/device failures and must not blame TCC.
+        const errorKey: TranslationKey = name === "NotAllowedError" || name === "SecurityError"
           ? "microphonePermissionDetail"
-          : "microphoneError");
+          : name === "NotFoundError" || name === "OverconstrainedError"
+            ? "microphoneUnavailableDetail"
+            : name === "NotReadableError" || name === "AbortError"
+              ? "microphoneBusyDetail"
+              : "microphoneError";
+        console.warn("[recording-lifecycle] get_user_media_failed", { name, errorKey });
+        fail(errorKey);
       }
     }
     void start();

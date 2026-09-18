@@ -307,9 +307,12 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
         </button>
       ) : null}
       <div className="live-transcript">
-        <h2>{t("liveTranscript")}</h2>
+        <h2>{t("liveTranscript")} <span className="soon-badge">{t("soon")}</span></h2>
         <p>{t("liveTranscriptPlaceholder")}</p>
       </div>
+      {microphone.status === "error" ? (
+        <button className="retry-save-control" onClick={onStartNew}>{t("tryAgain")}</button>
+      ) : null}
       {isCaptureActive ? (
         <div className="recording-controls">
           <button className="pause-control" disabled={recorder.status !== "recording" && recorder.status !== "paused"} onClick={() => {
