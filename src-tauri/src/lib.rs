@@ -3,6 +3,55 @@ mod transcription_runtime;
 
 mod transcription_chunking;
 
+#[tauri::command]
+async fn perform_native_titlebar_double_click(window: tauri::Window) -> Result<(), String> {
+    if window.is_fullscreen().map_err(|error| error.to_string())? {
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let preference = std::process::Command::new("defaults")
+            .args(["read", "-g", "AppleActionOnDoubleClick"])
+            .output()
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .to_lowercase()
+            })
+            .unwrap_or_default();
+
+        if preference.contains("minimize") {
+            window.minimize().map_err(|error| error.to_string())?;
+        } else if !preference.contains("none") && !preference.contains("do nothing") {
+            if window.is_maximized().map_err(|error| error.to_string())? {
+                window.unmaximize().map_err(|error| error.to_string())?;
+            } else {
+                window.maximize().map_err(|error| error.to_string())?;
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    if window.is_maximized().map_err(|error| error.to_string())? {
+        window.unmaximize().map_err(|error| error.to_string())?;
+    } else {
+        window.maximize().map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn write_titlebar_geometry(snapshot: serde_json::Value) -> Result<(), String> {
+    std::fs::write(
+        "/private/tmp/scribe-titlebar-geometry.json",
+        serde_json::to_vec_pretty(&snapshot).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
+}
+
 #[cfg(debug_assertions)]
 use commands::recordings::transcribe_recording_chunked_dev;
 use commands::recordings::{
@@ -34,6 +83,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            perform_native_titlebar_double_click,
             initialize_library,
             create_project,
             list_projects,
@@ -62,7 +112,9 @@ pub fn run() {
             transcribe_recording,
             cancel_transcription,
             #[cfg(debug_assertions)]
-            transcribe_recording_chunked_dev
+            transcribe_recording_chunked_dev,
+            #[cfg(debug_assertions)]
+            write_titlebar_geometry
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

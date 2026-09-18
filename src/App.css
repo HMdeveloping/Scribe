@@ -55,7 +55,12 @@ button {
 }
 
 .app {
+  --sidebar-width: 270px;
+  --sidebar-collapsed-width: 76px;
+  --sidebar-icon-center-expanded: 34px;
+  --sidebar-icon-center-collapsed: 38px;
   display: flex;
+  flex-direction: column;
   width: 100vw;
   height: 100%;
   min-height: 0;
@@ -63,13 +68,42 @@ button {
   overflow: hidden;
 }
 
+.app-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-titlebar {
+  display: none;
+}
+
+.app.is-macos .app-titlebar {
+  position: relative;
+  display: flex;
+  flex: 0 0 48px;
+  align-items: stretch;
+  padding: 0 0 0 86px;
+  background: var(--sidebar);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.055);
+  z-index: 5;
+}
+
+.titlebar-drag-region {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  cursor: default;
+}
+
 /* ─────────────────────────────
    SIDEBAR
 ───────────────────────────── */
 
 .sidebar {
-  width: 270px;
-  min-width: 270px;
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
   height: 100%;
   min-height: 0;
 
@@ -160,9 +194,86 @@ button {
   color: #353538;
 }
 
+/* Keep the macOS toolbar control isolated from sidebar navigation sizing. */
+.app.is-macos .app-titlebar .titlebar-sidebar-toggle {
+  position: absolute;
+  top: 50%;
+  left: 86px;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  flex: none;
+  transform: translateY(-50%);
+}
+
+.app.is-macos .app-titlebar .titlebar-sidebar-toggle svg {
+  width: 21px;
+  height: 21px;
+}
+
+.app.is-macos.is-fullscreen .app-titlebar .titlebar-sidebar-toggle {
+  left: calc(var(--sidebar-icon-center-expanded) - 17px);
+  width: 34px;
+  height: 34px;
+}
+
+.app.is-macos.is-fullscreen .app-titlebar {
+  background: #ffffff;
+  border-bottom: none;
+  box-shadow: none;
+}
+
+/* In fullscreen, continue the real sidebar surface through the native titlebar
+   row. The width follows the same state/geometry as the body sidebar. */
+.app.is-macos.is-fullscreen .app-titlebar::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--sidebar-width);
+  background: var(--sidebar);
+  border-right: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.app.is-macos.is-fullscreen.sidebar-is-collapsed .app-titlebar::before {
+  width: var(--sidebar-collapsed-width);
+}
+
+.app.is-macos.is-fullscreen .app-titlebar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--sidebar-width) - 1px);
+  width: 1px;
+  background: rgba(0, 0, 0, 0.055);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.app.is-macos.is-fullscreen.sidebar-is-collapsed .app-titlebar::after {
+  left: calc(var(--sidebar-collapsed-width) - 1px);
+}
+
+.app.is-macos.is-fullscreen.sidebar-is-collapsed .app-titlebar .titlebar-sidebar-toggle {
+  left: calc(var(--sidebar-icon-center-collapsed) - 17px);
+}
+
+.app.is-macos.is-fullscreen .app-titlebar .titlebar-sidebar-toggle svg {
+  width: 19px;
+  height: 19px;
+}
+
+.sidebar .sidebar-toggle {
+  display: none;
+}
+
 .sidebar.is-collapsed {
-  width: 76px;
-  min-width: 76px;
+  width: var(--sidebar-collapsed-width);
+  min-width: var(--sidebar-collapsed-width);
   padding: 14px 10px;
   align-items: center;
 }

@@ -22,6 +22,7 @@ import scribeIcon from "./assets/scribe-icon.png";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
@@ -312,6 +313,7 @@ function sortByLibraryRecency(items: RecordingSummary[]) {
 }
 
 function App() {
+  const isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent);
   const [view, setView] = useState<ViewName>("home");
   const [history, setHistory] = useState<NavEntry[]>([]);
   const [finalizing, setFinalizing] = useState(false);
@@ -339,6 +341,8 @@ function App() {
   const [transcriptionError, setTranscriptionError] = useState<ClassifiedTranscriptionError | undefined>();
   const [finalizingProgress, setFinalizingProgress] = useState<TranscriptionProgress | null>(null);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("auto");
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const titlebarToggleRef = useRef<HTMLButtonElement>(null);
   const [isNarrowSidebarRange, setIsNarrowSidebarRange] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(max-width: 980px)").matches;
@@ -610,6 +614,25 @@ function App() {
       .then(setAppVersion)
       .catch((reason) => console.warn("Scribe: unable to read app version", reason));
   }, []);
+
+  useEffect(() => {
+    if (!isMac) return;
+    let disposed = false;
+    const refreshFullscreen = async () => {
+      try {
+        const fullscreen = await getCurrentWindow().isFullscreen();
+        if (!disposed) setIsFullscreen(fullscreen);
+      } catch { /* native state may be unavailable during startup */ }
+    };
+    void refreshFullscreen();
+    const timer = window.setInterval(() => void refreshFullscreen(), 250);
+    const unlistenResize = getCurrentWindow().onResized(() => void refreshFullscreen());
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      void unlistenResize.then((unlisten) => unlisten());
+    };
+  }, [isMac]);
 
   useEffect(() => {
     if (!settingsLoaded || !settingsData || onboardingOpen) return;
@@ -1202,13 +1225,34 @@ function App() {
     setSidebarMode(sidebarCollapsed ? "expanded" : "collapsed");
   }
 
+  async function dragWindowFromTitlebar(event: MouseEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    try { await getCurrentWindow().startDragging(); } catch (error) {
+      if (import.meta.env.DEV) console.warn("Scribe titlebar drag failed", error);
+    }
+  }
+
+  async function toggleNativeTitlebarAction(event: MouseEvent<HTMLDivElement>) {
+    if (event.detail < 2) return;
+    try { await invoke("perform_native_titlebar_double_click"); } catch (error) {
+      if (import.meta.env.DEV) console.warn("Scribe titlebar double-click failed", error);
+    }
+  }
+
   function openTranscriptionSettings() {
     setSettingsInitialSection("Transcription");
     navigate({ view: "settings" }, "top");
   }
 
   return (
-    <div className="app">
+    <div className={`app${isMac ? " is-macos" : ""}${isFullscreen ? " is-fullscreen" : ""}${sidebarCollapsed ? " sidebar-is-collapsed" : ""}`}>
+      <div className="app-titlebar">
+        <div className="titlebar-drag-region" onMouseDown={(event) => { void dragWindowFromTitlebar(event); }} onDoubleClick={(event) => { void toggleNativeTitlebarAction(event); }} aria-hidden="true" />
+        <button ref={titlebarToggleRef} className="sidebar-toggle titlebar-sidebar-toggle" onClick={toggleSidebar} aria-label={toggleSidebarLabel} title={toggleSidebarLabel}>
+          {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+        </button>
+      </div>
+      <div className="app-body">
       <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`}>
         <div className="sidebar-top">
           <div className="sidebar-header">
@@ -1498,6 +1542,7 @@ function App() {
         </div>
         )}
       </main>
+      </div>
       {projectDialogOpen ? (
         <ProjectDialog
           title={t("newProject")}
