@@ -350,6 +350,8 @@ function App() {
   const t = useMemo(() => createTranslator(appLanguage), [appLanguage]);
   const activeRecordingProgressIdRef = useRef<string | null>(null);
   const activeTranscriptionRunRef = useRef<{ recordingId: string; runId: string } | null>(null);
+  const activeTranscriptionOriginRef = useRef<"new" | "existing" | "imported" | null>(null);
+  const activeTranscriptionPromiseRef = useRef<Promise<unknown> | null>(null);
   const transcriptionCommandStartedRef = useRef(false);
   const activeImportProgressIdRef = useRef<string | null>(null);
   const updateRef = useRef<Update | null>(null);
@@ -805,10 +807,12 @@ function App() {
       if (activeTranscriptionRunRef.current?.runId !== runId) return;
       transcriptionCommandStartedRef.current = true;
       console.info("[transcription-ui] invoking transcribe_recording", { recordingId: nextRecording.id });
-      const nextTranscript = await invoke<TranscriptData>("transcribe_recording", {
+      const transcriptionPromise = invoke<TranscriptData>("transcribe_recording", {
         recordingId: nextRecording.id,
         runId,
       });
+      activeTranscriptionPromiseRef.current = transcriptionPromise;
+      const nextTranscript = await transcriptionPromise;
       console.info("[transcription-ui] transcribe_recording success", { recordingId: nextRecording.id });
       setTranscript(nextTranscript);
       activeRecordingProgressIdRef.current = null;
@@ -821,6 +825,8 @@ function App() {
       activeTranscriptionRunRef.current = null;
       transcriptionCommandStartedRef.current = false;
       setTranscriptionError(classifyTranscriptionError(reason));
+    } finally {
+      if (activeTranscriptionRunRef.current?.recordingId === nextRecording.id) activeTranscriptionPromiseRef.current = null;
     }
   }
 
@@ -828,17 +834,39 @@ function App() {
     const active = activeTranscriptionRunRef.current;
     if (!active) return;
     if (!transcriptionCommandStartedRef.current) {
+      const discardNewRecording = activeTranscriptionOriginRef.current === "new";
       activeTranscriptionRunRef.current = null;
+      activeTranscriptionOriginRef.current = null;
       transcriptionCommandStartedRef.current = false;
       setFinalizing(false);
       setFinalizingProgress(null);
+      if (discardNewRecording) {
+        const result = await invoke<DeleteRecordingsResult>("delete_recordings", { recordingIds: [active.recordingId] });
+        if (result.failed.length > 0) throw new Error(result.failed[0].error);
+        await refreshLibrary();
+        navigate({ view: "home" }, "top");
+      }
       return;
     }
     await invoke("cancel_transcription", active);
+    await activeTranscriptionPromiseRef.current?.catch(() => undefined);
+    const discardNewRecording = activeTranscriptionOriginRef.current === "new";
     activeTranscriptionRunRef.current = null;
+    activeTranscriptionOriginRef.current = null;
+    activeTranscriptionPromiseRef.current = null;
     transcriptionCommandStartedRef.current = false;
     setFinalizing(false);
     setFinalizingProgress(null);
+    if (discardNewRecording) {
+      const result = await invoke<DeleteRecordingsResult>("delete_recordings", { recordingIds: [active.recordingId] });
+      if (result.failed.length > 0) throw new Error(result.failed[0].error);
+      await refreshLibrary();
+      setRecording(null);
+      setTranscript(null);
+      setRecordingProjectId(null);
+      setRecordingProjectName(null);
+      navigate({ view: "home" }, "top");
+    }
   }
 
   function startRecording(projectId: string | null = null) {
@@ -847,6 +875,8 @@ function App() {
     setFinalizingProgress(null);
     activeRecordingProgressIdRef.current = null;
     activeTranscriptionRunRef.current = null;
+    activeTranscriptionOriginRef.current = null;
+    activeTranscriptionPromiseRef.current = null;
     transcriptionCommandStartedRef.current = false;
     activeImportProgressIdRef.current = null;
     setRecording(null);
@@ -926,6 +956,7 @@ function App() {
       });
       applySavedRecording({ ...details, transcript: null });
       void refreshLibrary();
+      activeTranscriptionOriginRef.current = "imported";
       void transcribeRecording(details.recording);
     } catch (reason) {
       console.error("Scribe: unable to import audio", reason);
@@ -1378,6 +1409,7 @@ function App() {
           <RecordingView key={recordingSessionKey} t={t} projectId={recordingProjectId} onStop={(nextRecording) => {
             setRecording(nextRecording);
             setTranscript(null);
+            activeTranscriptionOriginRef.current = "new";
             void transcribeRecording(nextRecording);
           }} onSaved={applySavedRecording} onDiscard={discardActiveRecording} onStartNew={() => {
             console.info("[recording-ui] start-new clicked from too-short state");
