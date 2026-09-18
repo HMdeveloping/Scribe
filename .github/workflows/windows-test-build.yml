@@ -1,0 +1,99 @@
+name: Windows x64 Test Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  WHISPER_CPP_REF: v1.7.6
+
+jobs:
+  build-windows-test:
+    name: Build Windows x64 NSIS test installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Prepare Windows runtime binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install cmake --yes --no-progress
+          $runtimeDir = "src-tauri/resources/bin/x86_64-pc-windows-msvc"
+          $ffmpegZip = "$env:RUNNER_TEMP\ffmpeg-win64-lgpl.zip"
+          $ffmpegDir = "$env:RUNNER_TEMP\ffmpeg-win64-lgpl"
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip" -OutFile $ffmpegZip
+          Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegDir
+          $ffmpegPath = (Get-ChildItem -Path $ffmpegDir -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName
+          $ffprobePath = (Get-ChildItem -Path $ffmpegDir -Recurse -Filter ffprobe.exe | Select-Object -First 1).FullName
+          if (-not $ffmpegPath -or -not $ffprobePath) {
+            throw "Unable to find both FFmpeg executables in the LGPL archive"
+          }
+          git clone --depth 1 --branch $env:WHISPER_CPP_REF https://github.com/ggml-org/whisper.cpp.git "$env:RUNNER_TEMP\whisper.cpp"
+          cmake -S "$env:RUNNER_TEMP\whisper.cpp" -B "$env:RUNNER_TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON
+          cmake --build "$env:RUNNER_TEMP\whisper.cpp\build" --config Release --target whisper-cli
+          $env:FFMPEG_PATH = $ffmpegPath
+          $env:FFPROBE_PATH = $ffprobePath
+          $candidates = @(
+            "$env:RUNNER_TEMP\whisper.cpp\build\bin\Release\whisper-cli.exe",
+            "$env:RUNNER_TEMP\whisper.cpp\build\bin\whisper-cli.exe",
+            "$env:RUNNER_TEMP\whisper.cpp\build\examples\cli\Release\whisper-cli.exe"
+          )
+          $env:WHISPER_CLI_PATH = ($candidates | Where-Object { Test-Path $_ } | Select-Object -First 1)
+          if (-not $env:WHISPER_CLI_PATH) {
+            throw "Unable to find built whisper-cli.exe"
+          }
+          node scripts/stage-runtime-binaries.mjs x86_64-pc-windows-msvc
+          foreach ($binary in @("ffmpeg.exe", "ffprobe.exe", "whisper-cli.exe")) {
+            if (-not (Test-Path "$runtimeDir/$binary" -PathType Leaf)) {
+              throw "Missing staged $binary"
+            }
+          }
+          & "$runtimeDir/ffmpeg.exe" -version
+          & "$runtimeDir/ffprobe.exe" -version
+          if ((& "$runtimeDir/ffmpeg.exe" -version) -match "--enable-nonfree") {
+            throw "ffmpeg.exe was built with --enable-nonfree"
+          }
+          if ((& "$runtimeDir/ffprobe.exe" -version) -match "--enable-nonfree") {
+            throw "ffprobe.exe was built with --enable-nonfree"
+          }
+
+      - name: Build Windows x64 NSIS test installer
+        uses: tauri-apps/tauri-action@v1
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: --bundles nsis
+
+      - name: Verify NSIS installer exists
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File
+          if ($installer.Count -lt 1) {
+            throw "No NSIS installer was produced"
+          }
+          $installer | Select-Object FullName, Length
+
+      - name: Upload Windows x64 test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scribe-Windows-x64-Test
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
