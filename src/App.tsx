@@ -348,6 +348,7 @@ function App() {
   const activeTranscriptionRunRef = useRef<{ recordingId: string; runId: string } | null>(null);
   const transcriptionCommandStartedRef = useRef(false);
   const activeImportProgressIdRef = useRef<string | null>(null);
+  const recordingOpenTokenRef = useRef(0);
   const updateRef = useRef<Update | null>(null);
   const dismissedUpdateVersionRef = useRef<string | null>(null);
   const [appVersion, setAppVersion] = useState("0.1.0");
@@ -835,15 +836,40 @@ function App() {
   }
 
   async function openRecording(recordingId: string) {
+    const summary = [...recordings, ...archivedRecordings, ...projectRecordings].find((item) => item.id === recordingId);
+    const token = recordingOpenTokenRef.current + 1;
+    recordingOpenTokenRef.current = token;
     try {
+      if (summary) {
+        const startedAt = performance.now();
+        setRecording({
+          version: 1,
+          id: summary.id,
+          title: summary.title,
+          createdAt: summary.createdAt,
+          durationSeconds: summary.durationSeconds,
+          language: "sl",
+          audioFile: summary.audioFile,
+          mimeType: summary.mimeType,
+        });
+        setTranscript(null);
+        setRecordingProjectId(summary.projectId);
+        setRecordingProjectName(summary.projectName);
+        setTranscriptionError(undefined);
+        setFinalizing(false);
+        navigate({ view: "transcript", recordingId, projectId: summary.projectId }, "push");
+        console.info("[recording-open] shell-ready", { recordingId, elapsedMs: Math.round(performance.now() - startedAt) });
+      }
       const details = await invoke<RecordingDetails>("get_recording", { recordingId });
+      if (recordingOpenTokenRef.current !== token) return;
       setRecording(details.recording);
       setTranscript(details.transcript);
       setRecordingProjectId(details.projectId);
       setRecordingProjectName(details.projectName);
       setTranscriptionError(undefined);
       setFinalizing(false);
-      navigate({ view: "transcript", recordingId, projectId: details.projectId }, "push");
+      if (!summary) navigate({ view: "transcript", recordingId, projectId: details.projectId }, "push");
+      console.info("[recording-open] details-ready", { recordingId });
     } catch (reason) {
       console.error("Scribe: unable to open recording", reason);
     }
