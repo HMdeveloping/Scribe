@@ -42,6 +42,16 @@ function reconcileSelectedIds(current: Set<string>, visibleIds: string[]) {
   return new Set([...current].filter((id) => visible.has(id)));
 }
 
+function isSelectionOwnedClick(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest(
+    "button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true'], .recording-row-shell, .project-row-shell",
+  ));
+}
+
+function clearSelectionFromBackground(event: MouseEvent, clear: () => void) {
+  if (!isSelectionOwnedClick(event.target)) clear();
+}
+
 export function RecordingRow({
   recording,
   t,
@@ -213,7 +223,7 @@ export function HomeRecentRecordings({
 
   return (
     <section className="recent" onClick={(event) => {
-      if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+      if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
     }}>
       <div className="recent-header">
         <h2>{t("recentRecordings")}</h2>
@@ -227,7 +237,7 @@ export function HomeRecentRecordings({
           ref={listRef}
           className="recording-list selectable-list"
           onClick={(event) => {
-            if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+            if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
           }}
           onPointerLeave={() => setSelectionAffordanceHovered(false)}
         >
@@ -445,7 +455,7 @@ export function ProjectsView({
 
   return (
     <section className="library-view" onClick={(event) => {
-      if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+      if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
     }}>
       <header className="library-header">
         <div>
@@ -651,7 +661,7 @@ export function RecordingsView({
       </header>
       {recordings.length > 0 ? (
         <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
-          if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+          if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
         }}>
           <div className="bulk-action-bar">
             <button
@@ -839,7 +849,7 @@ export function ProjectDetailView({
 
   return (
     <section className="library-view" onClick={(event) => {
-      if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+      if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
     }}>
       <header className="library-header">
         <div>
@@ -888,7 +898,7 @@ export function ProjectDetailView({
       </header>
       {recordings.length > 0 ? (
         <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
-          if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
+          if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
         }}>
           <div className="bulk-action-bar">
             <button
