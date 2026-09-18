@@ -1289,7 +1289,9 @@ function App() {
         </button>
       </div>
       <div className="app-body">
-      <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`}>
+      <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClick={() => {
+        window.dispatchEvent(new Event("scribe-sidebar-interaction"));
+      }}>
         <div className="sidebar-top">
           <div className="sidebar-header">
             <button className="brand brand-button" onClick={() => navigate({ view: "home" }, "top")} aria-label={t("home")} title={sidebarCollapsed ? t("home") : undefined}>

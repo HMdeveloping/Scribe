@@ -52,6 +52,14 @@ function clearSelectionFromBackground(event: MouseEvent, clear: () => void) {
   if (!isSelectionOwnedClick(event.target)) clear();
 }
 
+function useSidebarSelectionClear(setSelectedIds: (ids: Set<string>) => void) {
+  useEffect(() => {
+    const clear = () => setSelectedIds(new Set());
+    window.addEventListener("scribe-sidebar-interaction", clear);
+    return () => window.removeEventListener("scribe-sidebar-interaction", clear);
+  }, [setSelectedIds]);
+}
+
 export function RecordingRow({
   recording,
   t,
@@ -154,6 +162,8 @@ export function HomeRecentRecordings({
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
+
+  useSidebarSelectionClear(setSelectedIds);
 
   useEffect(() => {
     if (!clearSelectionRef) return;
@@ -584,6 +594,8 @@ export function RecordingsView({
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
 
+  useSidebarSelectionClear(setSelectedIds);
+
   useEffect(() => setSelectedIds(new Set()), [archived]);
   useEffect(() => {
     setSelectedIds((current) => reconcileSelectedIds(current, visibleIds));
@@ -770,6 +782,8 @@ export function ProjectDetailView({
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
+
+  useSidebarSelectionClear(setSelectedIds);
 
   useEffect(() => {
     setDraftName(project.name);
