@@ -75,22 +75,6 @@ struct WhisperModelDefinition {
 
 const WHISPER_MODELS: &[WhisperModelDefinition] = &[
     WhisperModelDefinition {
-        id: "small",
-        name: "Small",
-        filename: "ggml-small.bin",
-        badge: "Fast",
-        description: "Fastest, lower accuracy",
-        expected_bytes: Some(487_601_967),
-    },
-    WhisperModelDefinition {
-        id: "medium",
-        name: "Medium",
-        filename: "ggml-medium.bin",
-        badge: "Balanced",
-        description: "Balanced speed and accuracy",
-        expected_bytes: Some(1_533_763_059),
-    },
-    WhisperModelDefinition {
         id: "large-v3-turbo",
         name: "Large v3 Turbo",
         filename: "ggml-large-v3-turbo.bin",
@@ -425,7 +409,9 @@ fn title_from_path(path: &Path) -> String {
 }
 
 fn ffmpeg_duration_seconds(ffmpeg: &Path, audio_path: &Path) -> Result<u64, String> {
-    let output = Command::new(ffmpeg)
+    let mut command = Command::new(ffmpeg);
+    crate::transcription_chunking::configure_background_command(&mut command);
+    let output = command
         .arg("-i")
         .arg(audio_path)
         .output()
@@ -469,7 +455,9 @@ fn parse_ffmpeg_time_seconds(value: &str) -> Option<f64> {
 }
 
 fn ffmpeg_decode_duration_seconds(ffmpeg: &Path, audio_path: &Path) -> Result<u64, String> {
-    let output = Command::new(ffmpeg)
+    let mut command = Command::new(ffmpeg);
+    crate::transcription_chunking::configure_background_command(&mut command);
+    let output = command
         .arg("-hide_banner")
         .arg("-i")
         .arg(audio_path)
@@ -498,7 +486,9 @@ fn probe_import_duration_seconds(app: &AppHandle, audio_path: &Path) -> Result<u
         TranscriptionError::FfmpegMissing(message) => message,
         other => format!("{other:?}"),
     })?;
-    let output = Command::new(&ffprobe)
+    let mut command = Command::new(&ffprobe);
+    crate::transcription_chunking::configure_background_command(&mut command);
+    let output = command
         .args([
             "-v",
             "error",
@@ -532,7 +522,9 @@ fn probe_import_duration_seconds(app: &AppHandle, audio_path: &Path) -> Result<u
 }
 
 fn probe_audio_duration_with_ffprobe(ffprobe: &Path, audio_path: &Path) -> Result<f64, String> {
-    let output = Command::new(ffprobe)
+    let mut command = Command::new(ffprobe);
+    crate::transcription_chunking::configure_background_command(&mut command);
+    let output = command
         .args([
             "-v",
             "error",
@@ -569,7 +561,9 @@ fn looks_like_media_timestamp(value: &str) -> bool {
 }
 
 fn embedded_media_created_at(ffprobe: &Path, audio_path: &Path) -> Option<String> {
-    let output = Command::new(ffprobe)
+    let mut command = Command::new(ffprobe);
+    crate::transcription_chunking::configure_background_command(&mut command);
+    let output = command
         .args([
             "-v",
             "quiet",
@@ -1100,6 +1094,19 @@ fn model_definition(model_id: &str) -> Option<&'static WhisperModelDefinition> {
     WHISPER_MODELS.iter().find(|model| model.id == model_id)
 }
 
+fn supported_model_fallback(model_dir: &Path, requested: &str) -> String {
+    if model_definition(requested).is_some() {
+        return requested.to_string();
+    }
+    if model_dir.join("ggml-large-v3.bin").is_file() {
+        return "large-v3".to_string();
+    }
+    if model_dir.join("ggml-large-v3-turbo.bin").is_file() {
+        return DEFAULT_WHISPER_MODEL_ID.to_string();
+    }
+    DEFAULT_WHISPER_MODEL_ID.to_string()
+}
+
 fn load_settings(app: &AppHandle) -> LoadedSettings {
     let fallback = || LoadedSettings {
         settings: default_settings(),
@@ -1142,9 +1149,14 @@ fn load_settings(app: &AppHandle) -> LoadedSettings {
 
     if model_definition(&settings.whisper_model).is_none() {
         eprintln!(
-            "Scribe settings: unknown persisted Whisper model id '{}'",
+            "Scribe settings: unsupported persisted Whisper model id '{}'; selecting a supported installed model",
             settings.whisper_model
         );
+        if let Ok(model_dir) = app_data_dir(app).map(|path| path.join("models").join("whisper")) {
+            settings.whisper_model = supported_model_fallback(&model_dir, &settings.whisper_model);
+        } else {
+            settings.whisper_model = DEFAULT_WHISPER_MODEL_ID.to_string();
+        }
     }
     if !is_supported_language(&settings.transcription_language) {
         settings.transcription_language = if is_supported_language(&settings.language) {
@@ -1555,7 +1567,9 @@ fn copy_with_progress(
 }
 
 fn command_works(executable: &Path, arg: &str) -> bool {
-    Command::new(executable)
+    let mut command = Command::new(executable);
+    crate::transcription_chunking::configure_background_command(&mut command);
+    command
         .arg(arg)
         .output()
         .map(|output| {
@@ -1565,7 +1579,9 @@ fn command_works(executable: &Path, arg: &str) -> bool {
 }
 
 fn path_command_works(executable: &str, arg: &str) -> bool {
-    Command::new(executable)
+    let mut command = Command::new(executable);
+    crate::transcription_chunking::configure_background_command(&mut command);
+    command
         .arg(arg)
         .output()
         .map(|output| {
@@ -2534,23 +2550,21 @@ fn run_whisper_with_args(
     whisper_cli: &Path,
     args: &[String],
 ) -> Result<std::process::Output, TranscriptionError> {
-    let mut output = Command::new(whisper_cli)
-        .args(args)
-        .output()
-        .map_err(|error| {
-            TranscriptionError::WhisperFailed(format!("Unable to start whisper.cpp: {error}"))
-        })?;
+    let mut command = Command::new(whisper_cli);
+    crate::transcription_chunking::configure_background_command(&mut command);
+    let mut output = command.args(args).output().map_err(|error| {
+        TranscriptionError::WhisperFailed(format!("Unable to start whisper.cpp: {error}"))
+    })?;
     if !output.status.success() {
         let mut cpu_args = args.to_vec();
         cpu_args.insert(0, "-ng".to_string());
-        output = Command::new(whisper_cli)
-            .args(&cpu_args)
-            .output()
-            .map_err(|error| {
-                TranscriptionError::WhisperFailed(format!(
-                    "Unable to start whisper.cpp CPU fallback: {error}"
-                ))
-            })?;
+        let mut command = Command::new(whisper_cli);
+        crate::transcription_chunking::configure_background_command(&mut command);
+        output = command.args(&cpu_args).output().map_err(|error| {
+            TranscriptionError::WhisperFailed(format!(
+                "Unable to start whisper.cpp CPU fallback: {error}"
+            ))
+        })?;
     }
     Ok(output)
 }
@@ -2617,7 +2631,9 @@ fn recover_decoder_loops(
             "s16".to_string(),
             retry_wav.to_string_lossy().to_string(),
         ];
-        let ffmpeg_output = Command::new(context.ffmpeg).args(&ffmpeg_args).output();
+        let mut ffmpeg_command = Command::new(context.ffmpeg);
+        crate::transcription_chunking::configure_background_command(&mut ffmpeg_command);
+        let ffmpeg_output = ffmpeg_command.args(&ffmpeg_args).output();
         if !matches!(ffmpeg_output, Ok(ref output) if output.status.success()) {
             let _ = std::fs::remove_file(&retry_wav);
             summary.rejected += 1;

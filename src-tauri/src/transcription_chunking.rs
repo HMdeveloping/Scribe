@@ -8,6 +8,18 @@ pub const CORE_FRAMES: u64 = 30 * SAMPLE_RATE;
 use serde::Deserialize;
 #[cfg(debug_assertions)]
 use std::io::Write;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+pub fn configure_background_command(command: &mut std::process::Command) {
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    #[cfg(not(windows))]
+    let _ = command;
+}
 
 pub fn source_audio_from_canonical_wav(bytes: &[u8]) -> Result<SourceAudio, &'static str> {
     if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
@@ -557,6 +569,7 @@ pub fn run_candidate_child(
     mut command: std::process::Command,
     cancel: &CancellationToken,
 ) -> Result<ChildResult, String> {
+    configure_background_command(&mut command);
     let mut child = command.spawn().map_err(|e| format!("spawn failed: {e}"))?;
     loop {
         if cancel.is_cancelled() {

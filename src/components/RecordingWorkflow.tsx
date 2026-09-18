@@ -447,7 +447,7 @@ export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, 
     ) : progress?.durationSeconds ? (
       <p>{formatDuration(progress.durationSeconds * 1000)} {t("audio")}</p>
     ) : null}
-    <button className="stop-control" onClick={onCancel}>{t("cancel")}</button>
+    <button className="transcription-cancel-control" onClick={onCancel}>{t("cancel")}</button>
   </section>;
 }
 

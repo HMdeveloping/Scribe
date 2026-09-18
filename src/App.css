@@ -2569,6 +2569,30 @@ button {
 .pause-control:hover { background: var(--hover); }
 .stop-control { border: 1px solid #202123; background: #202123; color: white; }
 .stop-control:hover { background: #353538; }
+
+.transcription-cancel-control {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.2;
+  margin-top: 22px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid rgba(32, 33, 35, 0.14);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--secondary);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.transcription-cancel-control:hover { background: #fff; border-color: rgba(32, 33, 35, 0.24); color: #202123; }
+.transcription-cancel-control:active { background: #f0f0f2; }
+.transcription-cancel-control:focus-visible { outline: 2px solid var(--scribe-indigo); outline-offset: 2px; }
 .discard-control {
   border: 1px solid rgba(180, 35, 24, 0.18);
   background: #fff4f2;
