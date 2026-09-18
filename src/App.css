@@ -2744,15 +2744,6 @@ button {
   transition: width 180ms ease;
 }
 
-.work-progress.is-indeterminate > div {
-  width: 38%;
-  animation: indeterminate-progress 1.25s ease-in-out infinite;
-}
-
-@keyframes indeterminate-progress {
-  0% { transform: translateX(-110%); }
-  100% { transform: translateX(275%); }
-}
 .transcription-error-view {
   width: min(520px, calc(100% - 48px));
   margin: 0 auto;

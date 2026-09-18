@@ -245,8 +245,10 @@ type ImportAudioProgress = {
 
 type RecordingProgressEvent = {
   recordingId: string;
+  runId: string;
   stage: "preparing" | "transcribing" | "finalizing";
   durationSeconds?: number;
+  percent?: number;
 };
 
 type SidebarMode = "auto" | "expanded" | "collapsed";
@@ -729,10 +731,11 @@ function App() {
     });
 
     void listen<RecordingProgressEvent>("recording-transcription-progress", (event) => {
-      if (disposed || event.payload.recordingId !== activeRecordingProgressIdRef.current) return;
+      if (disposed || event.payload.recordingId !== activeRecordingProgressIdRef.current || event.payload.runId !== activeTranscriptionRunRef.current?.runId) return;
       setFinalizingProgress({
         stage: event.payload.stage,
         durationSeconds: event.payload.durationSeconds,
+        percent: event.payload.percent,
       });
     }).then((unlisten) => {
       if (disposed) unlisten();

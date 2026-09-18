@@ -441,11 +441,10 @@ export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, 
   return <section className="finalizing-view" role="status">
     <LoaderCircle className="processing-spinner" size={30} aria-hidden="true" />
     <h1>{progressStageLabel(progress, t)}</h1>
-    <div className={`work-progress${isDeterminate ? "" : " is-indeterminate"}`}>
-      <div style={isDeterminate ? { width: `${Math.max(0, Math.min(100, progress?.percent ?? 0))}%` } : undefined} />
+    <div className="work-progress">
+      <div style={{ width: `${isDeterminate ? Math.max(0, Math.min(100, progress?.percent ?? 0)) : 0}%` }} />
     </div>
     <p className="transcription-percent">{isDeterminate ? Math.round(Math.max(0, Math.min(100, progress?.percent ?? 0))) : "0"}%</p>
-    <p>{t("improvingQuality")}</p>
     {progress?.downloadedBytes !== undefined ? (
       <p>{formatProgressBytes(progress.downloadedBytes)}{progress.totalBytes ? ` ${t("of")} ${formatProgressBytes(progress.totalBytes)}` : ""}</p>
     ) : progress?.durationSeconds ? (
