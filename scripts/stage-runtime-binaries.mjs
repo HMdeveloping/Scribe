@@ -159,6 +159,16 @@ for (const [envName, outputName] of inputs) {
   }
 }
 
+function windowsWhisperDlls(whisperCli) {
+  const buildDir = findWhisperBuildDir(whisperCli);
+  return walkFiles(buildDir)
+    .filter((file) => path.extname(file).toLowerCase() === ".dll")
+    .filter((file) => {
+      const name = path.basename(file).toLowerCase();
+      return name === "ggml.dll" || name.startsWith("ggml-") || name === "whisper.dll";
+    });
+}
+
 for (const envName of ["FFMPEG_PATH", "FFPROBE_PATH"]) {
   const source = process.env[envName];
   const version = execFileSync(source, ["-version"], { encoding: "utf8" });
@@ -215,6 +225,26 @@ if (!isWindows) {
   for (const stagedBinary of fs.readdirSync(outputDir).map((entry) => path.join(outputDir, entry))) {
     assertMacosArm64(stagedBinary);
     assertNoForbiddenMacosDeps(stagedBinary);
+  }
+} else {
+  const whisperCli = process.env.WHISPER_CLI_PATH;
+  const whisperDlls = unique(windowsWhisperDlls(whisperCli));
+  const stagedNames = new Set();
+  for (const source of whisperDlls) {
+    const destination = path.join(outputDir, path.basename(source));
+    fs.copyFileSync(source, destination);
+    if (fs.statSync(destination).size === 0) {
+      throw new Error(`Staged Windows whisper DLL is empty: ${destination}`);
+    }
+    stagedNames.add(path.basename(source).toLowerCase());
+    console.log(`staged ${path.basename(source)} from ${source}`);
+  }
+
+  if (!stagedNames.has("ggml.dll")) {
+    throw new Error(
+      `Required Windows whisper runtime DLL is missing: ggml.dll\n` +
+        `Searched beneath: ${findWhisperBuildDir(whisperCli)}`,
+    );
   }
 }
 

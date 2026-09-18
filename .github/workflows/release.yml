@@ -179,6 +179,7 @@ jobs:
           cmake --build "$env:RUNNER_TEMP\whisper.cpp\build" --config Release --target whisper-cli
           $env:FFMPEG_PATH = $ffmpegPath
           $env:FFPROBE_PATH = $ffprobePath
+          $env:WHISPER_BUILD_DIR = "$env:RUNNER_TEMP\whisper.cpp\build"
           $candidates = @(
             "$env:RUNNER_TEMP\whisper.cpp\build\bin\Release\whisper-cli.exe",
             "$env:RUNNER_TEMP\whisper.cpp\build\bin\whisper-cli.exe",
@@ -197,6 +198,13 @@ jobs:
           }
           if (-not (Test-Path "$runtimeDir/whisper-cli.exe" -PathType Leaf)) {
             throw "Missing staged whisper-cli.exe"
+          }
+          $dlls = Get-ChildItem -Path $runtimeDir -Filter "*.dll" -File
+          if (-not ($dlls | Where-Object { $_.Name -ieq "ggml.dll" })) {
+            throw "Missing staged ggml.dll"
+          }
+          if ($dlls.Count -lt 2) {
+            throw "Expected whisper runtime DLL closure was not staged"
           }
           & "$runtimeDir/ffmpeg.exe" -version
           & "$runtimeDir/ffprobe.exe" -version
@@ -481,9 +489,9 @@ jobs:
         run: |
           set -euo pipefail
           cat > release-notes.md <<'EOF'
-          Scribe v0.1.14 improves transcription reliability.
+          Scribe includes the latest transcription reliability, interface, and stability improvements.
 
-          This release conservatively reduces obvious repeated-phrase hallucination loops while preserving legitimate repetition, such as natural repeated words. It also includes stability and reliability improvements.
+          See the release assets and updater metadata for the user-facing release summary.
           EOF
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release edit "$TAG_NAME" --title "Scribe $TAG_NAME" --notes-file release-notes.md
@@ -600,7 +608,7 @@ jobs:
 
           jq -n \
             --arg version "$release_version" \
-            --arg notes "Scribe v0.1.14 improves transcription reliability.\n\nThis release conservatively reduces obvious repeated-phrase hallucination loops while preserving legitimate repetition, such as natural repeated words. It also includes stability and reliability improvements." \
+            --arg notes "Scribe $TAG_NAME includes the latest transcription reliability, interface, and stability improvements.\n\nSee the GitHub release notes for the user-facing summary." \
             --arg pub_date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
             --arg mac_url "https://github.com/${REPOSITORY}/releases/download/${TAG_NAME}/${mac_tar_name}" \
             --arg mac_signature "$mac_signature" \

@@ -50,6 +50,7 @@ jobs:
           cmake --build "$env:RUNNER_TEMP\whisper.cpp\build" --config Release --target whisper-cli
           $env:FFMPEG_PATH = $ffmpegPath
           $env:FFPROBE_PATH = $ffprobePath
+          $env:WHISPER_BUILD_DIR = "$env:RUNNER_TEMP\whisper.cpp\build"
           $candidates = @(
             "$env:RUNNER_TEMP\whisper.cpp\build\bin\Release\whisper-cli.exe",
             "$env:RUNNER_TEMP\whisper.cpp\build\bin\whisper-cli.exe",
@@ -64,6 +65,13 @@ jobs:
             if (-not (Test-Path "$runtimeDir/$binary" -PathType Leaf)) {
               throw "Missing staged $binary"
             }
+          }
+          $dlls = Get-ChildItem -Path $runtimeDir -Filter "*.dll" -File
+          if (-not ($dlls | Where-Object { $_.Name -ieq "ggml.dll" })) {
+            throw "Missing staged ggml.dll"
+          }
+          if ($dlls.Count -lt 2) {
+            throw "Expected whisper runtime DLL closure was not staged"
           }
           & "$runtimeDir/ffmpeg.exe" -version
           & "$runtimeDir/ffprobe.exe" -version
