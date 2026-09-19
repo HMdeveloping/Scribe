@@ -48,64 +48,8 @@ export function isSelectionOwnedClick(target: EventTarget | null) {
   ));
 }
 
-function describeElement(element: Element | null) {
-  if (!element) return null;
-  const rect = element.getBoundingClientRect();
-  return {
-    tag: element.tagName.toLowerCase(),
-    className: element.className,
-    data: Object.fromEntries([...element.attributes].filter((attribute) => attribute.name.startsWith("data-")).map((attribute) => [attribute.name, attribute.value])),
-    rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height },
-  };
-}
-
-function describeAncestry(target: Element | null) {
-  const ancestry: ReturnType<typeof describeElement>[] = [];
-  let current = target;
-  while (current && ancestry.length < 6) {
-    ancestry.push(describeElement(current));
-    current = current.parentElement;
-  }
-  return ancestry;
-}
-
-function clearSelectionFromBackground(event: MouseEvent, view: string, selectedIds: Set<string>, clear: () => void) {
-  if (!import.meta.env.DEV) {
-    if (!isSelectionOwnedClick(event.target)) clear();
-    return;
-  }
-  const target = event.target instanceof Element ? event.target : null;
-  const protectedElement = target?.closest("button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true']") ?? null;
-  const recordingRow = target?.closest(".recording-row, .project-row") ?? null;
-  const interactive = isSelectionOwnedClick(event.target);
-  console.debug("[SCRIBE_DESELECT_DEBUG]", {
-    view,
-    target: describeElement(target),
-    closestProtected: describeElement(protectedElement),
-    closestRecordingRow: describeElement(recordingRow),
-    backgroundHandlerReached: true,
-    clearSelectionRequested: !interactive,
-    selectedIdsBefore: [...selectedIds],
-    ancestry: describeAncestry(target),
-  });
-  if (!interactive) {
-    clear();
-    console.debug("[SCRIBE_DESELECT_DEBUG]", { view, selectedIdsImmediatelyAfter: [] });
-  }
-}
-
-function useSidebarSelectionClear(setSelectedIds: (ids: Set<string>) => void, owner: string, selectedIds: Set<string>) {
-  useEffect(() => {
-    const clear = () => {
-      if (import.meta.env.DEV) console.debug("[SCRIBE_SIDEBAR_DEBUG]", { owner, selectedIdsBefore: [...selectedIds], clearCallback: "local-selection-owner" });
-      setSelectedIds(new Set());
-    };
-    window.addEventListener("scribe-sidebar-interaction", clear);
-    return () => window.removeEventListener("scribe-sidebar-interaction", clear);
-  }, [owner, selectedIds, setSelectedIds]);
-  useEffect(() => {
-    if (import.meta.env.DEV && selectedIds.size === 0) console.debug("[SCRIBE_SIDEBAR_DEBUG]", { owner, selectedIdsAfter: [] });
-  }, [owner, selectedIds]);
+function clearSelectionFromBackground(event: MouseEvent, clear: () => void) {
+  if (!isSelectionOwnedClick(event.target)) clear();
 }
 
 export function RecordingRow({
@@ -187,6 +131,7 @@ export function HomeRecentRecordings({
   getRecordingActions,
   onRecordingContextMenu,
   clearSelectionRef,
+  selectionClearSignal = 0,
 }: {
   recordings: RecordingSummary[];
   t: TFunction;
@@ -199,6 +144,7 @@ export function HomeRecentRecordings({
   getRecordingActions: (recording: RecordingSummary) => ContextMenuAction[];
   onRecordingContextMenu: (event: MouseEvent, recording: RecordingSummary) => void;
   clearSelectionRef?: MutableRefObject<() => void>;
+  selectionClearSignal?: number;
 }) {
   const visibleRecordings = recordings.slice(0, 5);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -211,7 +157,7 @@ export function HomeRecentRecordings({
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
 
-  useSidebarSelectionClear(setSelectedIds, "HOME_RECENTS", selectedIds);
+  useEffect(() => { if (selectionClearSignal > 0) setSelectedIds(new Set()); }, [selectionClearSignal]);
 
   useEffect(() => {
     if (!clearSelectionRef) return;
@@ -255,7 +201,6 @@ export function HomeRecentRecordings({
 
   function selectRecording(event: MouseEvent, recording: RecordingSummary) {
     const index = visibleRecordings.findIndex((item) => item.id === recording.id);
-    if (import.meta.env.DEV) console.debug("[SCRIBE_PROJECT_SELECTION_DEBUG]", { owner: "HOME_RECENTS", selectedIdsBefore: [...selectedIds], recordingId: recording.id });
     setSelectedIds((current) => {
       const next = new Set(current);
       if (event.shiftKey && anchorIndexRef.current !== null) {
@@ -290,7 +235,7 @@ export function HomeRecentRecordings({
 
   return (
     <section className="recent" onClick={(event) => {
-      if (selectedIds.size > 0) clearSelectionFromBackground(event, "HOME_RECENTS", selectedIds, () => setSelectedIds(new Set()));
+      if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
     }}>
       <div className="recent-header">
         <h2>{t("recentRecordings")}</h2>
@@ -304,7 +249,7 @@ export function HomeRecentRecordings({
           ref={listRef}
           className="recording-list selectable-list"
           onClick={(event) => {
-            if (selectedIds.size > 0) clearSelectionFromBackground(event, "HOME_RECENTS", selectedIds, () => setSelectedIds(new Set()));
+            if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
           }}
           onPointerLeave={() => setSelectionAffordanceHovered(false)}
         >
@@ -522,7 +467,7 @@ export function ProjectsView({
 
   return (
     <section className="library-view" onClick={(event) => {
-      if (selectedIds.size > 0) clearSelectionFromBackground(event, "RECORDINGS", selectedIds, () => setSelectedIds(new Set()));
+      if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
     }}>
       <header className="library-header">
         <div>
@@ -618,6 +563,7 @@ export function RecordingsView({
   archived = false,
   canGoBack,
   onBack,
+  selectionClearSignal = 0,
 }: {
   recordings: RecordingSummary[];
   t: TFunction;
@@ -633,6 +579,7 @@ export function RecordingsView({
   archived?: boolean;
   canGoBack: boolean;
   onBack: () => void;
+  selectionClearSignal?: number;
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionAffordanceHovered, setSelectionAffordanceHovered] = useState(false);
@@ -643,7 +590,7 @@ export function RecordingsView({
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
 
-  useSidebarSelectionClear(setSelectedIds, "RECORDINGS", selectedIds);
+  useEffect(() => { if (selectionClearSignal > 0) setSelectedIds(new Set()); }, [selectionClearSignal]);
 
   useEffect(() => setSelectedIds(new Set()), [archived]);
   useEffect(() => {
@@ -681,7 +628,6 @@ export function RecordingsView({
 
   function selectRecording(event: MouseEvent, recording: RecordingSummary) {
     const index = recordings.findIndex((item) => item.id === recording.id);
-    if (import.meta.env.DEV) console.debug("[SCRIBE_PROJECT_SELECTION_DEBUG]", { owner: "RECORDINGS", selectedIdsBefore: [...selectedIds], recordingId: recording.id });
     setSelectedIds((current) => {
       const next = new Set(current);
       if (event.shiftKey && anchorIndexRef.current !== null) {
@@ -731,7 +677,7 @@ export function RecordingsView({
       </header>
       {recordings.length > 0 ? (
         <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
-          if (selectedIds.size > 0) clearSelectionFromBackground(event, "RECORDINGS", selectedIds, () => setSelectedIds(new Set()));
+      if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
         }}>
           <div className="bulk-action-bar">
             <button
@@ -804,6 +750,7 @@ export function ProjectDetailView({
   getRecordingActions,
   onRecordingContextMenu,
   onBack,
+  selectionClearSignal = 0,
 }: {
   project: Project;
   recordings: RecordingSummary[];
@@ -820,6 +767,7 @@ export function ProjectDetailView({
   getRecordingActions: (recording: RecordingSummary) => ContextMenuAction[];
   onRecordingContextMenu: (event: MouseEvent, recording: RecordingSummary) => void;
   onBack: () => void;
+  selectionClearSignal?: number;
 }) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftName, setDraftName] = useState(project.name);
@@ -833,7 +781,7 @@ export function ProjectDetailView({
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
 
-  useSidebarSelectionClear(setSelectedIds, `PROJECT_RECORDINGS:${project.id}`, selectedIds);
+  useEffect(() => { if (selectionClearSignal > 0) setSelectedIds(new Set()); }, [selectionClearSignal]);
 
   useEffect(() => {
     setDraftName(project.name);
@@ -897,7 +845,6 @@ export function ProjectDetailView({
 
   function selectRecording(event: MouseEvent, recording: RecordingSummary) {
     const index = recordings.findIndex((item) => item.id === recording.id);
-    if (import.meta.env.DEV) console.debug("[SCRIBE_PROJECT_SELECTION_DEBUG]", { owner: `PROJECT_RECORDINGS:${project.id}`, projectId: project.id, selectedIdsBefore: [...selectedIds], recordingId: recording.id });
     setSelectedIds((current) => {
       const next = new Set(current);
       if (event.shiftKey && anchorIndexRef.current !== null) {
@@ -922,7 +869,7 @@ export function ProjectDetailView({
 
   return (
     <section className="library-view" onClick={(event) => {
-      if (selectedIds.size > 0) clearSelectionFromBackground(event, "PROJECT_RECORDINGS", selectedIds, () => setSelectedIds(new Set()));
+      if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
     }}>
       <header className="library-header">
         <div>
@@ -971,7 +918,7 @@ export function ProjectDetailView({
       </header>
       {recordings.length > 0 ? (
         <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
-          if (selectedIds.size > 0) clearSelectionFromBackground(event, "PROJECT_RECORDINGS", selectedIds, () => setSelectedIds(new Set()));
+          if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
         }}>
           <div className="bulk-action-bar">
             <button

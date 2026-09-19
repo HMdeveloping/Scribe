@@ -346,6 +346,7 @@ function App() {
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("auto");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const titlebarToggleRef = useRef<HTMLButtonElement>(null);
+  const [selectionClearSignal, setSelectionClearSignal] = useState(0);
   const homeClearSelectionRef = useRef<() => void>(() => {});
   const [isNarrowSidebarRange, setIsNarrowSidebarRange] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -1289,16 +1290,8 @@ function App() {
         </button>
       </div>
       <div className="app-body">
-      <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClickCapture={(event) => {
-        if (import.meta.env.DEV) {
-          const target = event.target instanceof Element ? event.target.closest("button") : null;
-          console.debug("[SCRIBE_SIDEBAR_DEBUG]", {
-            clickedDestination: target?.textContent?.trim() || target?.getAttribute("aria-label") || target?.className || "sidebar-empty-space",
-            currentView: view,
-            navigationCallbackExecuted: false,
-          });
-        }
-        window.dispatchEvent(new Event("scribe-sidebar-interaction"));
+      <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClickCapture={() => {
+        setSelectionClearSignal((current) => current + 1);
       }}>
         <div className="sidebar-top">
           <div className="sidebar-header">
@@ -1474,6 +1467,7 @@ function App() {
           onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
           canGoBack={canGoBack}
           onBack={goBack}
+          selectionClearSignal={selectionClearSignal}
         />
         : view === "archived-recordings" ? <RecordingsView
           recordings={archivedRecordings}
@@ -1506,6 +1500,7 @@ function App() {
           getRecordingActions={recordingActions}
           onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
           onBack={goBack}
+          selectionClearSignal={selectionClearSignal}
         />
         : view === "settings" ? <SettingsView
           appVersion={appVersion}
@@ -1588,6 +1583,7 @@ function App() {
             getRecordingActions={recordingActions}
             onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
             clearSelectionRef={homeClearSelectionRef}
+            selectionClearSignal={selectionClearSignal}
           />
         </div>
         )}
