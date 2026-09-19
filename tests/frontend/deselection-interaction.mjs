@@ -16,7 +16,7 @@ globalThis.MouseEvent = dom.window.MouseEvent;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const vite = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom", optimizeDeps: { noDiscovery: true, include: [] } });
-const { HomeRecentRecordings, RecordingsView, ProjectDetailView, SidebarSelectionBoundary, MainContentSelectionBoundary } = await vite.ssrLoadModule("/src/components/LibraryViews.tsx");
+const { HomeRecentRecordings, RecordingsView, ProjectDetailView, SidebarSelectionBoundary, SidebarNavigationItem, MainContentSelectionBoundary } = await vite.ssrLoadModule("/src/components/LibraryViews.tsx");
 const legacyDf0Library = execFileSync("git", ["show", "df0c71a:src/components/LibraryViews.tsx"], { encoding: "utf8" });
 assert.match(legacyDf0Library, /event\.target === event\.currentTarget/, "baseline contains the broken nested-background condition exercised below");
 assert.match(legacyDf0Library, /selectionClearSignal/, "baseline uses the prior deferred signal architecture exercised by the sidebar test");
@@ -115,8 +115,11 @@ for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
   activeSelectionClearRef.current = noClearRegistered;
   const view = await mount(h(React.Fragment, null,
     h(SidebarSelectionBoundary, { onClearSelection: () => { ordering.push("clear"); activeSelectionClearRef.current(); } },
-      h("button", { onClick: () => { ordering.push("navigate"); if (destination !== "Projects") route.current = destination; } }, destination)),
-    projectView(activeSelectionClearRef),
+      h(SidebarNavigationItem, {
+        className: destination === "Settings" ? "settings-button" : "nav-item",
+        onClick: () => { ordering.push("navigate"); if (destination !== "Projects") route.current = destination; },
+      }, destination)),
+    h(MainContentSelectionBoundary, { className: "main-content", onBackgroundClick: () => activeSelectionClearRef.current() }, projectView(activeSelectionClearRef)),
     h("output", { "data-testid": "route" }, route.current),
   ));
   assert.notEqual(activeSelectionClearRef.current, noClearRegistered, "actual ProjectDetail registers its local selection owner");
@@ -126,7 +129,9 @@ for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
     assert.equal(view.host.querySelectorAll(".recording-row-shell.is-selected").length, 2, "sidebar multi-selection setup uses actual ProjectDetail state");
   }
   assert.equal(view.host.querySelector(".recording-row-shell.is-selected") !== null, true, `${destination}: project recording selection is active before sidebar click`);
-  await view.click([...view.host.querySelectorAll("button")].find((button) => button.textContent === destination));
+  const sidebarItem = view.host.querySelector(destination === "Settings" ? ".settings-button" : ".nav-item");
+  assert.ok(sidebarItem, `${destination}: actual production sidebar navigation item is mounted`);
+  await view.click(sidebarItem);
   assert.equal(view.host.querySelector(".recording-row-shell.is-selected") !== null, false, `${destination}: actual ProjectDetail owner cleared by actual boundary click`);
   assert.deepEqual(ordering, ["clear", "navigate"], `${destination}: actual sidebar click clears before its action`);
   assert.equal(route.current, destination === "Projects" ? "project-detail" : destination, `${destination}: sidebar navigation/action still executes (Projects may remain same-page)`);

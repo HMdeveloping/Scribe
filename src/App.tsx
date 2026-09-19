@@ -37,6 +37,7 @@ import {
 import {
   HomeRecentRecordings,
   MainContentSelectionBoundary,
+  SidebarNavigationItem,
   localizedRecordingTitle,
   MoveToProjectDialog,
   ProjectDialog,
@@ -1324,7 +1325,7 @@ function App() {
           </button>
 
           <nav className="navigation">
-            <button
+            <SidebarNavigationItem
               className={`nav-item${view === "home" ? " active" : ""}`}
               aria-current={view === "home" ? "page" : undefined}
               onClick={() => navigate({ view: "home" }, "top")}
@@ -1332,9 +1333,9 @@ function App() {
             >
               <Home size={18} strokeWidth={1.8} />
               <span>{t("home")}</span>
-            </button>
+            </SidebarNavigationItem>
 
-            <button
+            <SidebarNavigationItem
               className={`nav-item${view === "projects" || view === "project-detail" ? " active" : ""}`}
               aria-current={view === "projects" || view === "project-detail" ? "page" : undefined}
               onClick={() => navigate({ view: "projects" }, "top")}
@@ -1342,9 +1343,9 @@ function App() {
             >
               <FolderClosed size={18} strokeWidth={1.8} />
               <span>{t("projects")}</span>
-            </button>
+            </SidebarNavigationItem>
 
-            <button
+            <SidebarNavigationItem
               className={`nav-item${view === "recordings" || view === "archived-recordings" ? " active" : ""}`}
               aria-current={view === "recordings" || view === "archived-recordings" ? "page" : undefined}
               onClick={() => navigate({ view: "recordings" }, "top")}
@@ -1352,7 +1353,7 @@ function App() {
             >
               <AudioLines size={18} strokeWidth={1.8} />
               <span>{t("recordings")}</span>
-            </button>
+            </SidebarNavigationItem>
 
             <button className="nav-item disabled" title={sidebarCollapsed ? t("search") : undefined}>
               <Search size={18} strokeWidth={1.8} />
@@ -1372,7 +1373,7 @@ function App() {
           </div>
         </div>
 
-        <button
+        <SidebarNavigationItem
           className={`settings-button${view === "settings" ? " active" : ""}`}
           onClick={() => {
             setSettingsInitialSection("General");
@@ -1382,7 +1383,7 @@ function App() {
         >
           <Settings size={18} strokeWidth={1.8} />
           <span>{t("settings")}</span>
-        </button>
+        </SidebarNavigationItem>
       </SidebarSelectionBoundary>
 
       <MainContentSelectionBoundary className="main-content" onBackgroundClick={() => {

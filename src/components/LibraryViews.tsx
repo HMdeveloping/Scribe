@@ -1,5 +1,5 @@
 import { Archive, AudioLines, Check, FolderClosed, FolderInput, MoreHorizontal, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type FormEvent, type MouseEvent, type MutableRefObject, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type FormEvent, type MouseEvent, type MutableRefObject, type ReactNode } from "react";
 import { languageLocales, type AppLanguage, type TFunction } from "../i18n";
 import type { Project, RecordingSummary } from "../types/library";
 import type { ContextMenuAction } from "./ContextMenu";
@@ -47,6 +47,15 @@ export function SidebarSelectionBoundary({
   children: ReactNode;
 }) {
   return <aside className={className} onClickCapture={onClearSelection}>{children}</aside>;
+}
+
+export function SidebarNavigationItem({
+  className = "nav-item",
+  onClick,
+  children,
+  ...buttonProps
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button {...buttonProps} className={className} onClick={onClick}>{children}</button>;
 }
 
 export function MainContentSelectionBoundary({
