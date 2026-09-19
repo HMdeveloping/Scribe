@@ -25,6 +25,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       WHISPER_CPP_REF: v1.7.6
+      VULKAN_SDK_VERSION: 1.4.341.0
       FFMPEG_REF: n6.1.1
     strategy:
       fail-fast: false
@@ -161,6 +162,17 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           choco install cmake --yes --no-progress
+          choco install vulkan-sdk --version=1.4.341 --yes --no-progress
+          $vulkanSdk = "C:\VulkanSDK\$env:VULKAN_SDK_VERSION"
+          if (-not (Test-Path "$vulkanSdk\Include\vulkan\vulkan.h")) {
+            throw "Pinned Vulkan SDK headers were not installed: $vulkanSdk"
+          }
+          $glslc = Get-ChildItem -Path $vulkanSdk -Recurse -Filter glslc.exe -File | Select-Object -First 1
+          if (-not $glslc) {
+            throw "Pinned Vulkan SDK glslc.exe was not installed"
+          }
+          $env:VULKAN_SDK = $vulkanSdk
+          $env:Path = "$($glslc.Directory.FullName);$vulkanSdk\Bin;$env:Path"
           $runtimeDir = "src-tauri/resources/bin/${{ matrix.target }}"
           $ffmpegZip = "$env:RUNNER_TEMP\ffmpeg-win64-lgpl.zip"
           $ffmpegDir = "$env:RUNNER_TEMP\ffmpeg-win64-lgpl"
@@ -175,7 +187,7 @@ jobs:
             throw "Unable to find ffprobe.exe in LGPL Windows FFmpeg archive"
           }
           git clone --depth 1 --branch $env:WHISPER_CPP_REF https://github.com/ggml-org/whisper.cpp.git "$env:RUNNER_TEMP\whisper.cpp"
-          cmake -S "$env:RUNNER_TEMP\whisper.cpp" -B "$env:RUNNER_TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DGGML_VULKAN=ON
+          cmake -S "$env:RUNNER_TEMP\whisper.cpp" -B "$env:RUNNER_TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DGGML_VULKAN=ON -DVulkan_ROOT="$env:VULKAN_SDK"
           cmake --build "$env:RUNNER_TEMP\whisper.cpp\build" --config Release --target whisper-cli
           $env:FFMPEG_PATH = $ffmpegPath
           $env:FFPROBE_PATH = $ffprobePath
