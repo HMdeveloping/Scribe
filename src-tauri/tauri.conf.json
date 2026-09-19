@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "Scribe",
+        "devtools": false,
         "width": 900,
         "height": 640,
         "minWidth": 860,

@@ -1,5 +1,5 @@
 import { Archive, AudioLines, Check, FolderClosed, FolderInput, MoreHorizontal, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type FormEvent, type MouseEvent, type MutableRefObject, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type Dispatch, type FormEvent, type MouseEvent, type MutableRefObject, type ReactNode, type SetStateAction } from "react";
 import { languageLocales, type AppLanguage, type TFunction } from "../i18n";
 import type { Project, RecordingSummary } from "../types/library";
 import type { ContextMenuAction } from "./ContextMenu";
@@ -783,7 +783,8 @@ export function ProjectDetailView({
   getRecordingActions,
   onRecordingContextMenu,
   onBack,
-  selectionClearRef,
+  selectedIds,
+  setSelectedIds,
 }: {
   project: Project;
   recordings: RecordingSummary[];
@@ -800,11 +801,11 @@ export function ProjectDetailView({
   getRecordingActions: (recording: RecordingSummary) => ContextMenuAction[];
   onRecordingContextMenu: (event: MouseEvent, recording: RecordingSummary) => void;
   onBack: () => void;
-  selectionClearRef?: MutableRefObject<() => void>;
+  selectedIds: Set<string>;
+  setSelectedIds: Dispatch<SetStateAction<Set<string>>>;
 }) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftName, setDraftName] = useState(project.name);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionAffordanceHovered, setSelectionAffordanceHovered] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const anchorIndexRef = useRef<number | null>(null);
@@ -813,13 +814,12 @@ export function ProjectDetailView({
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
-
-  useRegisterSelectionClear(selectionClearRef, clearSelection);
-
   useEffect(() => {
     setDraftName(project.name);
   }, [project.name]);
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [project.id, setSelectedIds]);
   useEffect(() => {
     setSelectedIds((current) => reconcileSelectedIds(current, visibleIds));
   }, [visibleIds.join(":")]);
@@ -949,7 +949,9 @@ export function ProjectDetailView({
         </div>
       </header>
       {recordings.length > 0 ? (
-        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)}>
+        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
+          if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
+        }}>
           <div className="bulk-action-bar">
             <button
               className={`selection-circle select-all-control${!showHeaderSelector ? " is-hidden" : ""}${allSelected ? " is-selected" : ""}${someSelected ? " is-indeterminate" : ""}`}

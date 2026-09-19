@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import React, { act, createRef } from "react";
 import { createRoot } from "react-dom/client";
@@ -17,6 +18,14 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const vite = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom", optimizeDeps: { noDiscovery: true, include: [] } });
 const { HomeRecentRecordings, RecordingsView, ProjectDetailView, SidebarSelectionBoundary, SidebarNavigationItem, MainContentSelectionBoundary } = await vite.ssrLoadModule("/src/components/LibraryViews.tsx");
+const { WebviewContextMenuGuard } = await vite.ssrLoadModule("/src/components/WebviewContextMenuGuard.tsx");
+const { useProjectRecordingSelection } = await vite.ssrLoadModule("/src/hooks/useProjectRecordingSelection.ts");
+const tauriConfig = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
+assert.equal(tauriConfig.app.windows[0].devtools, false, "Tauri main webview disables built-in development tools in debug and release configurations");
+const appSource = readFileSync("src/App.tsx", "utf8");
+assert.match(appSource, /useProjectRecordingSelection\(\)/);
+assert.match(appSource, /selectedIds=\{projectSelectedRecordingIds\}\s+setSelectedIds=\{setProjectSelectedRecordingIds\}/);
+assert.match(appSource, /clearProjectRecordingSelection\(\)/, "App directly clears the sole ProjectDetail selection source on sidebar and background actions");
 const legacyDf0Library = execFileSync("git", ["show", "df0c71a:src/components/LibraryViews.tsx"], { encoding: "utf8" });
 assert.match(legacyDf0Library, /event\.target === event\.currentTarget/, "baseline contains the broken nested-background condition exercised below");
 assert.match(legacyDf0Library, /selectionClearSignal/, "baseline uses the prior deferred signal architecture exercised by the sidebar test");
@@ -40,12 +49,14 @@ const recording = (id = "rec-1") => ({
   transcriptStatus: "none", archivedAt: null,
 });
 const project = { id: "project-1", name: "Project", createdAt: "2026-01-01", updatedAt: "2026-01-01", recordingCount: 2, totalDurationSeconds: 180 };
-const noActions = () => [];
 const noOp = () => {};
+let openedRecordings = 0;
 const props = {
-  recordings: [recording(), recording("rec-2")], t, appLanguage: "en", onOpenRecording: noOp,
+  recordings: [recording(), recording("rec-2")], t, appLanguage: "en", onOpenRecording: () => { openedRecordings += 1; },
   onMoveRecordings: noOp, onArchiveRecordings: noOp, onRestoreRecordings: noOp,
-  onDeleteRecordings: () => true, getRecordingActions: noActions, onRecordingContextMenu: noOp,
+  onDeleteRecordings: () => true,
+  getRecordingActions: () => [{ id: "test-action", label: "Test action", onSelect: noOp }],
+  onRecordingContextMenu: noOp,
   canGoBack: false, onBack: noOp,
 };
 
@@ -83,13 +94,19 @@ async function testBackground(Component, elementFactory, backgroundSelector) {
     assert.equal(whitespace === page, false, "df0c71a target/currentTarget branch would not clear this nested child click");
   }
   await view.click(whitespace);
-  assert.equal(view.host.querySelector(".recording-row-shell.is-selected"), null, `${Component}: actual DOM whitespace click clears actual selection`);
+  assert.equal(view.host.querySelector(".recording-row-shell.is-selected") !== null, false, `${Component}: actual DOM whitespace click clears actual selection`);
   await view.click(view.host.querySelector(".recording-row-shell .selection-circle"));
   const secondCheckbox = view.host.querySelectorAll(".recording-row-shell .selection-circle")[1];
   await view.click(secondCheckbox);
   assert.equal(view.host.querySelectorAll(".recording-row-shell.is-selected").length, 2, `${Component}: multiple selection controls work`);
   await view.click(view.host.querySelector(".recording-row-shell"));
   assert.equal(view.host.querySelectorAll(".recording-row-shell.is-selected").length, 0, `${Component}: nearby background clears all selected rows`);
+  const openedBefore = openedRecordings;
+  await view.click(view.host.querySelector(".recording-row"));
+  assert.equal(openedRecordings, openedBefore + 1, `${Component}: ordinary row click still opens the recording`);
+  await view.click(view.host.querySelector(".recording-row-shell .selection-circle"));
+  await view.click(view.host.querySelector(".row-menu-button"));
+  assert.equal(view.host.querySelectorAll(".recording-row-shell.is-selected").length, 1, `${Component}: menu action establishes/preserves its target selection without background clearing`);
   await view.unmount();
 }
 
@@ -101,42 +118,68 @@ await testBackground("RecordingsView", (clearRef) => h(RecordingsView, {
   ...props, onOpenArchived: noOp, selectionClearRef: clearRef,
 }), ".library-header > div");
 
-const projectView = (selectionClearRef) => h(ProjectDetailView, {
+const projectView = (selectedIds, setSelectedIds) => h(ProjectDetailView, {
   project, ...props, onNewRecording: noOp, onImportAudio: noOp, onRenameProject: noOp,
-  onDeleteProject: noOp, selectionClearRef,
+  onDeleteProject: noOp, selectedIds, setSelectedIds,
 });
-await testBackground("ProjectDetailView", projectView, ".library-header > div");
+
+function ControlledProjectView({ clearRef }) {
+  const selection = useProjectRecordingSelection();
+  clearRef.current = selection.clearSelection;
+  return projectView(selection.selectedIds, selection.setSelectedIds);
+}
+
+await testBackground("ProjectDetailView", (clearRef) => h(ControlledProjectView, { clearRef }), ".library-header > div");
 
 for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
   const route = { current: "project-detail" };
   const ordering = [];
-  const activeSelectionClearRef = createRef();
-  const noClearRegistered = () => {};
-  activeSelectionClearRef.current = noClearRegistered;
+  function ProjectAppHierarchy() {
+    const selection = useProjectRecordingSelection();
+    return h(React.Fragment, null,
+      h(WebviewContextMenuGuard),
+      h(SidebarSelectionBoundary, { onClearSelection: () => { ordering.push("clear"); selection.clearSelection(); } },
+        h(SidebarNavigationItem, {
+          className: destination === "Settings" ? "settings-button" : "nav-item",
+          onClick: () => { ordering.push("navigate"); if (destination !== "Projects") route.current = destination; },
+        }, destination)),
+      h(MainContentSelectionBoundary, { className: "main-content", onBackgroundClick: selection.clearSelection }, projectView(selection.selectedIds, selection.setSelectedIds)),
+      h("output", { "data-testid": "route" }, route.current),
+    );
+  }
   const view = await mount(h(React.Fragment, null,
-    h(SidebarSelectionBoundary, { onClearSelection: () => { ordering.push("clear"); activeSelectionClearRef.current(); } },
-      h(SidebarNavigationItem, {
-        className: destination === "Settings" ? "settings-button" : "nav-item",
-        onClick: () => { ordering.push("navigate"); if (destination !== "Projects") route.current = destination; },
-      }, destination)),
-    h(MainContentSelectionBoundary, { className: "main-content", onBackgroundClick: () => activeSelectionClearRef.current() }, projectView(activeSelectionClearRef)),
-    h("output", { "data-testid": "route" }, route.current),
+  h(ProjectAppHierarchy),
   ));
-  assert.notEqual(activeSelectionClearRef.current, noClearRegistered, "actual ProjectDetail registers its local selection owner");
   await view.click(view.host.querySelector(".recording-row-shell .selection-circle"));
   if (destination === "Recordings") {
     await view.click(view.host.querySelectorAll(".recording-row-shell .selection-circle")[1]);
     assert.equal(view.host.querySelectorAll(".recording-row-shell.is-selected").length, 2, "sidebar multi-selection setup uses actual ProjectDetail state");
   }
-  assert.equal(view.host.querySelector(".recording-row-shell.is-selected") !== null, true, `${destination}: project recording selection is active before sidebar click`);
+  assert.equal(view.host.querySelector(".recording-row-shell.is-selected") !== null, true, `${destination}: App-owned ProjectDetail selection is active before sidebar click`);
   const sidebarItem = view.host.querySelector(destination === "Settings" ? ".settings-button" : ".nav-item");
   assert.ok(sidebarItem, `${destination}: actual production sidebar navigation item is mounted`);
   await view.click(sidebarItem);
-  assert.equal(view.host.querySelector(".recording-row-shell.is-selected") !== null, false, `${destination}: actual ProjectDetail owner cleared by actual boundary click`);
+  assert.equal(view.host.querySelector(".recording-row-shell.is-selected") !== null, false, `${destination}: App-owned ProjectDetail selection cleared by actual sidebar click`);
   assert.deepEqual(ordering, ["clear", "navigate"], `${destination}: actual sidebar click clears before its action`);
   assert.equal(route.current, destination === "Projects" ? "project-detail" : destination, `${destination}: sidebar navigation/action still executes (Projects may remain same-page)`);
   await view.unmount();
 }
+
+const contextMenuTest = await mount(h(WebviewContextMenuGuard));
+for (const target of [document.createElement("div"), document.createElement("button"), document.createElement("aside")]) {
+  document.body.append(target);
+  const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  target.dispatchEvent(event);
+  assert.equal(event.defaultPrevented, true, "ordinary app surfaces suppress the WebView development context menu");
+  target.remove();
+}
+const editable = document.createElement("input");
+document.body.append(editable);
+const editableMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+editable.dispatchEvent(editableMenu);
+assert.equal(editableMenu.defaultPrevented, false, "editable input retains its native text-editing context menu");
+editable.remove();
+await contextMenuTest.unmount();
 
 await vite.close();
 dom.window.close();

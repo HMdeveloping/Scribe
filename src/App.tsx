@@ -50,7 +50,9 @@ import {
 import { ContextMenu, type ContextMenuAction, type ContextMenuState } from "./components/ContextMenu";
 import { localizedModel, SettingsView, type SettingsViewData, type UpdateProgress, type UpdateStatus } from "./components/SettingsView";
 import { Onboarding } from "./components/Onboarding";
+import { WebviewContextMenuGuard } from "./components/WebviewContextMenuGuard";
 import { useWhisperModelDownloads } from "./hooks/useWhisperModelDownloads";
+import { useProjectRecordingSelection } from "./hooks/useProjectRecordingSelection";
 import { createTranslator, currentGreetingKey, type AppLanguage, type TranslationKey } from "./i18n";
 import type { Project, RecordingDetails, RecordingSummary } from "./types/library";
 
@@ -349,6 +351,11 @@ function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const titlebarToggleRef = useRef<HTMLButtonElement>(null);
   const activeSelectionClearRef = useRef<() => void>(() => {});
+  const {
+    selectedIds: projectSelectedRecordingIds,
+    setSelectedIds: setProjectSelectedRecordingIds,
+    clearSelection: clearProjectRecordingSelection,
+  } = useProjectRecordingSelection();
   const [isNarrowSidebarRange, setIsNarrowSidebarRange] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(max-width: 980px)").matches;
@@ -1284,6 +1291,7 @@ function App() {
 
   return (
     <div className={`app${isMac ? " is-macos" : ""}${isFullscreen ? " is-fullscreen" : ""}${sidebarCollapsed ? " sidebar-is-collapsed" : ""}`}>
+      <WebviewContextMenuGuard />
       <div className="app-titlebar">
         <div className="titlebar-drag-region" onMouseDown={(event) => { void dragWindowFromTitlebar(event); }} onDoubleClick={(event) => { void toggleNativeTitlebarAction(event); }} aria-hidden="true" />
         <button ref={titlebarToggleRef} className="sidebar-toggle titlebar-sidebar-toggle" onClick={toggleSidebar} aria-label={toggleSidebarLabel} title={toggleSidebarLabel}>
@@ -1291,7 +1299,10 @@ function App() {
         </button>
       </div>
       <div className="app-body">
-      <SidebarSelectionBoundary className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClearSelection={() => activeSelectionClearRef.current()}>
+      <SidebarSelectionBoundary className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClearSelection={() => {
+        activeSelectionClearRef.current();
+        clearProjectRecordingSelection();
+      }}>
         <div className="sidebar-top">
           <div className="sidebar-header">
             <button className="brand brand-button" onClick={() => navigate({ view: "home" }, "top")} aria-label={t("home")} title={sidebarCollapsed ? t("home") : undefined}>
@@ -1388,6 +1399,7 @@ function App() {
 
       <MainContentSelectionBoundary className="main-content" onBackgroundClick={() => {
         if (["home", "recordings", "archived-recordings", "project-detail"].includes(view)) activeSelectionClearRef.current();
+        if (view === "project-detail") clearProjectRecordingSelection();
       }}>
         {finalizing ? <FinalizingView
           errorKind={transcriptionError?.kind}
@@ -1500,7 +1512,8 @@ function App() {
           getRecordingActions={recordingActions}
           onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
           onBack={goBack}
-          selectionClearRef={activeSelectionClearRef}
+          selectedIds={projectSelectedRecordingIds}
+          setSelectedIds={setProjectSelectedRecordingIds}
         />
         : view === "settings" ? <SettingsView
           appVersion={appVersion}
