@@ -902,7 +902,11 @@ export function ProjectDetailView({
   }
 
   return (
-    <section className="library-view">
+    <section className="library-view" onClick={(event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".recording-row, button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true']")) return;
+      setSelectedIds(new Set());
+    }}>
       <header className="library-header">
         <div>
           <BackButton t={t} onBack={onBack} />
@@ -949,9 +953,7 @@ export function ProjectDetailView({
         </div>
       </header>
       {recordings.length > 0 ? (
-        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
-          if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
-        }}>
+        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)}>
           <div className="bulk-action-bar">
             <button
               className={`selection-circle select-all-control${!showHeaderSelector ? " is-hidden" : ""}${allSelected ? " is-selected" : ""}${someSelected ? " is-indeterminate" : ""}`}

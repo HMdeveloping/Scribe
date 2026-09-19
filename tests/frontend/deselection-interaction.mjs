@@ -25,7 +25,7 @@ assert.equal(tauriConfig.app.windows[0].devtools, false, "Tauri main webview dis
 const appSource = readFileSync("src/App.tsx", "utf8");
 assert.match(appSource, /useProjectRecordingSelection\(\)/);
 assert.match(appSource, /selectedIds=\{projectSelectedRecordingIds\}\s+setSelectedIds=\{setProjectSelectedRecordingIds\}/);
-assert.match(appSource, /clearProjectRecordingSelection\(\)/, "App directly clears the sole ProjectDetail selection source on sidebar and background actions");
+assert.match(appSource, /clearProjectRecordingSelection\(\)/, "sidebar and Project background directly clear the rendered App-owned selection source");
 const legacyDf0Library = execFileSync("git", ["show", "df0c71a:src/components/LibraryViews.tsx"], { encoding: "utf8" });
 assert.match(legacyDf0Library, /event\.target === event\.currentTarget/, "baseline contains the broken nested-background condition exercised below");
 assert.match(legacyDf0Library, /selectionClearSignal/, "baseline uses the prior deferred signal architecture exercised by the sidebar test");
@@ -136,15 +136,17 @@ for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
   const ordering = [];
   function ProjectAppHierarchy() {
     const selection = useProjectRecordingSelection();
+    const [currentRoute, setCurrentRoute] = React.useState("project-detail");
     return h(React.Fragment, null,
       h(WebviewContextMenuGuard),
-      h(SidebarSelectionBoundary, { onClearSelection: () => { ordering.push("clear"); selection.clearSelection(); } },
+      h(SidebarSelectionBoundary, { className: "sidebar", onClearSelection: () => { ordering.push("clear"); selection.clearSelection(); } },
         h(SidebarNavigationItem, {
           className: destination === "Settings" ? "settings-button" : "nav-item",
-          onClick: () => { ordering.push("navigate"); if (destination !== "Projects") route.current = destination; },
+          onClick: () => { ordering.push("navigate"); if (destination !== "Projects") { route.current = destination; setCurrentRoute(destination); } },
         }, destination)),
-      h(MainContentSelectionBoundary, { className: "main-content", onBackgroundClick: selection.clearSelection }, projectView(selection.selectedIds, selection.setSelectedIds)),
-      h("output", { "data-testid": "route" }, route.current),
+      h(MainContentSelectionBoundary, { className: "main-content", onBackgroundClick: selection.clearSelection }, currentRoute === "project-detail"
+        ? projectView(selection.selectedIds, selection.setSelectedIds)
+        : h("output", { "data-testid": "route" }, currentRoute)),
     );
   }
   const view = await mount(h(React.Fragment, null,
@@ -156,12 +158,16 @@ for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
     assert.equal(view.host.querySelectorAll(".recording-row-shell.is-selected").length, 2, "sidebar multi-selection setup uses actual ProjectDetail state");
   }
   assert.equal(view.host.querySelector(".recording-row-shell.is-selected") !== null, true, `${destination}: App-owned ProjectDetail selection is active before sidebar click`);
+  await view.click(view.host.querySelector("aside.sidebar"));
+  assert.equal(view.host.querySelector(".recording-row-shell.is-selected"), null, `${destination}: sidebar-root background capture directly clears Project selection`);
+  ordering.length = 0;
+  await view.click(view.host.querySelector(".recording-row-shell .selection-circle"));
   const sidebarItem = view.host.querySelector(destination === "Settings" ? ".settings-button" : ".nav-item");
   assert.ok(sidebarItem, `${destination}: actual production sidebar navigation item is mounted`);
   await view.click(sidebarItem);
-  assert.equal(view.host.querySelector(".recording-row-shell.is-selected") !== null, false, `${destination}: App-owned ProjectDetail selection cleared by actual sidebar click`);
+  assert.equal(view.host.querySelector(".recording-row-shell.is-selected"), null, `${destination}: sidebar directly clears App-owned ProjectDetail selection`);
   assert.deepEqual(ordering, ["clear", "navigate"], `${destination}: actual sidebar click clears before its action`);
-  assert.equal(route.current, destination === "Projects" ? "project-detail" : destination, `${destination}: sidebar navigation/action still executes (Projects may remain same-page)`);
+  assert.equal(route.current, destination === "Projects" ? "project-detail" : destination, `${destination}: sidebar action executes; same-page Projects remains open`);
   await view.unmount();
 }
 
