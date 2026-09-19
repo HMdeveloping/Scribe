@@ -501,14 +501,28 @@ jobs:
         run: |
           set -euo pipefail
           cat > release-notes.md <<'EOF'
-          Scribe includes the latest transcription reliability, interface, and stability improvements.
+          Scribe v0.1.23 RC.1
 
-          See the release assets and updater metadata for the user-facing release summary.
+          Pre-V1 release candidate for additional real-world testing.
+
+          Highlights:
+          - improved Windows stability
+          - local transcription reliability improvements
+          - Windows GPU acceleration with CPU fallback
+          - improved transcription progress and cancellation
+          - responsive desktop UI improvements
+          - recording, import, playback, and general pre-V1 polish
+
+          Microsoft Store availability is separate and is not included in this release.
           EOF
+          release_flags=(--title "Scribe $TAG_NAME" --notes-file release-notes.md)
+          if [[ "$TAG_NAME" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release edit "$TAG_NAME" --title "Scribe $TAG_NAME" --notes-file release-notes.md
+            gh release edit "$TAG_NAME" "${release_flags[@]}"
           else
-            gh release create "$TAG_NAME" --title "Scribe $TAG_NAME" --notes-file release-notes.md --generate-notes
+            gh release create "$TAG_NAME" "${release_flags[@]}"
           fi
 
       - name: Stage release assets and updater manifest
@@ -521,6 +535,7 @@ jobs:
           shopt -s nullglob
           mkdir -p release-upload
           release_version="${TAG_NAME#v}"
+          release_version="${release_version%%-*}"
           package_version="$(jq -r '.version' package.json)"
           tauri_version="$(jq -r '.version' src-tauri/tauri.conf.json)"
           cargo_version="$(awk -F ' *= *' '/^version = / { gsub(/"/, "", $2); print $2; exit }' src-tauri/Cargo.toml)"
