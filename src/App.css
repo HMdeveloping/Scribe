@@ -1436,7 +1436,7 @@ button {
 
 .modal-backdrop {
   position: fixed;
-  top: var(--modal-top-inset);
+  top: 0;
   right: 0;
   bottom: 0;
   left: 0;
@@ -1444,6 +1444,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+  padding: var(--modal-top-inset) 0 0;
   background: rgba(32, 33, 35, 0.18);
 }
 
@@ -1837,14 +1839,15 @@ button {
 
 .onboarding-backdrop {
   position: fixed;
-  top: var(--modal-top-inset);
+  top: 0;
   right: 0;
   bottom: 0;
   left: 0;
   z-index: 40;
   display: grid;
   place-items: center;
-  padding: 24px;
+  box-sizing: border-box;
+  padding: calc(var(--modal-top-inset) + 24px) 24px 24px;
   background: rgba(20, 21, 24, 0.18);
   backdrop-filter: blur(12px);
 }
@@ -2176,14 +2179,15 @@ button {
 
 .model-picker-backdrop {
   position: fixed;
-  top: var(--modal-top-inset);
+  top: 0;
   right: 0;
   bottom: 0;
   left: 0;
   z-index: 20;
   display: grid;
   place-items: center;
-  padding: 24px;
+  box-sizing: border-box;
+  padding: calc(var(--modal-top-inset) + 24px) 24px 24px;
   background: rgba(0, 0, 0, 0.18);
 }
 
@@ -2816,7 +2820,7 @@ button {
   .model-picker-backdrop {
     align-items: center;
     justify-content: center;
-    padding: 16px;
+    padding: calc(var(--modal-top-inset) + 16px) 16px 16px;
     overflow-y: auto;
   }
 
