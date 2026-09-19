@@ -693,16 +693,15 @@ export function RecordingSelectionList({
   }
 
   return (
-    <div className="recording-selection-surface">
+    <div className="recording-selection-surface" onClick={(event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".recording-row, button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true']")) return;
+      setSelectedIds(new Set());
+    }}>
       {recordings.length > 0 ? (
         <div
           className="recording-list selectable-list"
           onPointerLeave={() => setSelectionAffordanceHovered(false)}
-          onClick={(event) => {
-            const target = event.target;
-            if (target instanceof Element && target.closest(".recording-row, button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true']")) return;
-            setSelectedIds(new Set());
-          }}
         >
           <div className="bulk-action-bar">
             <button
@@ -889,9 +888,7 @@ export function ProjectDetailView({
   }
 
   return (
-    <section className="library-view" onClick={(event) => {
-      if (!isSelectionOwnedClick(event.target)) setSelectedIds(new Set());
-    }}>
+    <section className="library-view">
       <header className="library-header">
         <div>
           <BackButton t={t} onBack={onBack} />
