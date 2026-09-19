@@ -44,7 +44,7 @@ function reconcileSelectedIds(current: Set<string>, visibleIds: string[]) {
 
 export function isSelectionOwnedClick(target: EventTarget | null) {
   return target instanceof Element && Boolean(target.closest(
-    "button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true'], .recording-row-shell, .project-row-shell",
+    "button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true']",
   ));
 }
 
