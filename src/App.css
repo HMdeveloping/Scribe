@@ -294,6 +294,14 @@ button {
 
 /* Windows keeps the icon rail on the collapsed 76px sidebar's 38px axis
    even while the surrounding sidebar is expanded. */
+.app:not(.is-macos) .sidebar:not(.is-collapsed) {
+  /* Keep the expanded sidebar's total width unchanged while placing its
+     shared control origin on the center of the visible collapsed rail:
+     (76px content + 20px padding + 1px border) / 2 = 48.5px. */
+  padding-left: 23.5px;
+  padding-right: 2.5px;
+}
+
 .app:not(.is-macos) .sidebar:not(.is-collapsed) .sidebar-header .sidebar-toggle {
   margin-left: 1px;
 }
