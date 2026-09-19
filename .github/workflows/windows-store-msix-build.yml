@@ -92,6 +92,18 @@ jobs:
           Copy-Item "src-tauri\icons\Square150x150Logo.png" "$assets\Square150x150Logo.png"
           Copy-Item "src-tauri\icons\Square44x44Logo.png" "$assets\Square44x44Logo.png"
           Copy-Item "scripts\windows-store\AppxManifest.xml" "$payload\AppxManifest.xml"
+          [xml]$preflightManifest = Get-Content "$payload\AppxManifest.xml"
+          $manifestRoot = $preflightManifest.Package
+          $namespaceManager = New-Object System.Xml.XmlNamespaceManager($preflightManifest.NameTable)
+          $namespaceManager.AddNamespace("appx", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
+          $namespaceManager.AddNamespace("uap10", "http://schemas.microsoft.com/appx/manifest/uap/windows10/10")
+          $namespaceManager.AddNamespace("rescap", "http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities")
+          $application = $preflightManifest.SelectSingleNode("/appx:Package/appx:Applications/appx:Application", $namespaceManager)
+          $runFullTrust = $preflightManifest.SelectSingleNode("/appx:Package/appx:Capabilities/rescap:Capability[@Name='runFullTrust']", $namespaceManager)
+          if (-not $manifestRoot.GetAttribute("rescap", "http://www.w3.org/2000/xmlns/")) { throw "MSIX manifest preflight failed: rescap namespace is missing" }
+          if (-not $runFullTrust) { throw "MSIX manifest preflight failed: runFullTrust capability is missing" }
+          if (-not $application -or $application.GetAttribute("RuntimeBehavior", "http://schemas.microsoft.com/appx/manifest/uap/windows10/10") -ne "packagedClassicApp" -or $application.GetAttribute("TrustLevel", "http://schemas.microsoft.com/appx/manifest/uap/windows10/10") -ne "mediumIL") { throw "MSIX manifest preflight failed: packagedClassicApp/mediumIL declaration is missing" }
+          Write-Host "MSIX manifest preflight passed: rescap/runFullTrust and packagedClassicApp/mediumIL are present."
           $makeAppx = $null
           $pathCommand = Get-Command MakeAppx.exe -ErrorAction SilentlyContinue
           if ($pathCommand) {
