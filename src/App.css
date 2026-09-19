@@ -302,6 +302,10 @@ button {
   padding-left: 0;
 }
 
+.app:not(.is-macos) .sidebar.is-collapsed .sidebar-header {
+  align-items: center;
+}
+
 .app:not(.is-macos) .sidebar:not(.is-collapsed) .sidebar-header .sidebar-toggle {
   margin-left: 1px;
 }
