@@ -284,6 +284,24 @@ button {
   margin-left: 8px;
 }
 
+/* Windows keeps the icon rail on the collapsed 76px sidebar's 38px axis
+   even while the surrounding sidebar is expanded. */
+.app:not(.is-macos) .sidebar:not(.is-collapsed) .sidebar-header .sidebar-toggle {
+  margin-left: 1px;
+}
+
+.app:not(.is-macos) .sidebar:not(.is-collapsed) .brand {
+  padding-left: 1px;
+}
+
+.app:not(.is-macos) .sidebar:not(.is-collapsed) .new-recording,
+.app:not(.is-macos) .sidebar:not(.is-collapsed) .sidebar-import-audio,
+.app:not(.is-macos) .sidebar:not(.is-collapsed) .nav-item,
+.app:not(.is-macos) .sidebar:not(.is-collapsed) .settings-button {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
 .sidebar.is-collapsed {
   width: var(--sidebar-collapsed-width);
   min-width: var(--sidebar-collapsed-width);
