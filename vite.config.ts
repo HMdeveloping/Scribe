@@ -8,6 +8,12 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(() => ({
   plugins: [react()],
 
+  // Release bundles must not ship JavaScript source maps. Keep development
+  // behavior unchanged while avoiding source recovery from packaged assets.
+  build: {
+    sourcemap: false,
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
