@@ -43,7 +43,7 @@ jobs:
           if (-not $ffmpegPath) { throw "Unable to find ffmpeg.exe in LGPL Windows FFmpeg archive" }
           if (-not $ffprobePath) { throw "Unable to find ffprobe.exe in LGPL Windows FFmpeg archive" }
           git clone --depth 1 --branch $env:WHISPER_CPP_REF https://github.com/ggml-org/whisper.cpp.git "$env:RUNNER_TEMP\whisper.cpp"
-          cmake -S "$env:RUNNER_TEMP\whisper.cpp" -B "$env:RUNNER_TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON
+          cmake -S "$env:RUNNER_TEMP\whisper.cpp" -B "$env:RUNNER_TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DGGML_VULKAN=ON
           cmake --build "$env:RUNNER_TEMP\whisper.cpp\build" --config Release --target whisper-cli
           $env:FFMPEG_PATH = $ffmpegPath
           $env:FFPROBE_PATH = $ffprobePath

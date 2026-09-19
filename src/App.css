@@ -2914,6 +2914,16 @@ button {
   transition: width 180ms ease;
 }
 
+.finalizing-view.is-preparing .work-progress > div {
+  width: 35% !important;
+  animation: preparing-progress 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes preparing-progress {
+  from { transform: translateX(-20%); }
+  to { transform: translateX(190%); }
+}
+
 .transcription-error-view {
   width: min(520px, calc(100% - 48px));
   margin: 0 auto;

@@ -46,7 +46,7 @@ jobs:
             throw "Unable to find both FFmpeg executables in the LGPL archive"
           }
           git clone --depth 1 --branch $env:WHISPER_CPP_REF https://github.com/ggml-org/whisper.cpp.git "$env:RUNNER_TEMP\whisper.cpp"
-          cmake -S "$env:RUNNER_TEMP\whisper.cpp" -B "$env:RUNNER_TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON
+          cmake -S "$env:RUNNER_TEMP\whisper.cpp" -B "$env:RUNNER_TEMP\whisper.cpp\build" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DGGML_VULKAN=ON
           cmake --build "$env:RUNNER_TEMP\whisper.cpp\build" --config Release --target whisper-cli
           $env:FFMPEG_PATH = $ffmpegPath
           $env:FFPROBE_PATH = $ffprobePath

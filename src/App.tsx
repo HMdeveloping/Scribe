@@ -782,7 +782,7 @@ function App() {
     activeImportProgressIdRef.current = null;
     setFinalizing(true);
     setTranscriptionError(undefined);
-    setFinalizingProgress({ stage: "preparing", durationSeconds: nextRecording.durationSeconds, percent: 0 });
+    setFinalizingProgress({ stage: "preparing", durationSeconds: nextRecording.durationSeconds });
     let currentSettings = settingsData;
     try {
       const refreshedSettings = await invoke<SettingsViewData>("load_scribe_settings");

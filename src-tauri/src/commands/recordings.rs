@@ -302,8 +302,10 @@ pub struct ImportAudioProgress {
 #[serde(rename_all = "camelCase")]
 pub struct RecordingTranscriptionProgress {
     recording_id: String,
+    run_id: String,
     stage: String,
     duration_seconds: Option<u64>,
+    percent: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1313,17 +1315,39 @@ fn emit_import_progress(
 fn emit_transcription_progress(
     app: &AppHandle,
     recording_id: &str,
+    run_id: &str,
     stage: &str,
     duration_seconds: Option<u64>,
+    percent: Option<f64>,
 ) {
     let _ = app.emit(
         "recording-transcription-progress",
         RecordingTranscriptionProgress {
             recording_id: recording_id.to_string(),
+            run_id: run_id.to_string(),
             stage: stage.to_string(),
             duration_seconds,
+            percent,
         },
     );
+}
+
+fn production_progress(completed_chunks: usize, total_chunks: usize, stage: &str) -> f64 {
+    let chunk_fraction = if total_chunks == 0 {
+        0.0
+    } else {
+        (completed_chunks as f64 / total_chunks as f64).clamp(0.0, 1.0)
+    };
+    let value = match stage {
+        "preparing" => 0.0,
+        "transcribing" => 5.0 + (chunk_fraction * 85.0),
+        "merge" => 95.0,
+        "finalizing" => 97.0,
+        "persisting" => 99.0,
+        "complete" => 100.0,
+        _ => 0.0,
+    };
+    value.clamp(0.0, 100.0)
 }
 
 fn summarize_process_output(bytes: &[u8]) -> String {
@@ -2848,6 +2872,32 @@ fn parse_whisper_segments_with_sanitization(
         });
     }
 
+    let mut flattened_words = segments
+        .iter()
+        .flat_map(|segment| segment.words.iter().cloned())
+        .collect::<Vec<_>>();
+    let original_word_count = flattened_words.len();
+    let smoothed = smooth_word_timings(std::mem::take(&mut flattened_words));
+    let smoothed = if smoothed.len() == original_word_count {
+        smoothed
+    } else {
+        segments
+            .iter()
+            .flat_map(|segment| segment.words.iter().cloned())
+            .collect()
+    };
+    let mut smoothed_iter = smoothed.into_iter();
+    let segments = segments
+        .into_iter()
+        .map(|mut segment| {
+            segment.words = segment
+                .words
+                .iter()
+                .map(|_| smoothed_iter.next().expect("word smoothing cardinality"))
+                .collect();
+            segment
+        })
+        .collect();
     Ok((segments, sanitization))
 }
 
@@ -2908,6 +2958,7 @@ fn run_production_c0(
         language: context.language.clone(),
         output_dir: work_dir.join("whisper"),
         cancel: cancel.clone(),
+        gpu_failed: false,
     };
     std::fs::create_dir_all(&extractor.output_dir)
         .map_err(|error| TranscriptionError::Io(error.to_string()))?;
@@ -2921,11 +2972,18 @@ fn run_production_c0(
             completed += 1;
         }
         let stage = if event.stage == "merge" {
-            "finalizing"
+            "merge"
         } else {
             "transcribing"
         };
-        emit_transcription_progress(app, &recording_id, stage, None);
+        let percent = if event.stage == "whisper" && event.outcome == "success" {
+            production_progress(completed, total, "transcribing")
+        } else if event.stage == "merge" && event.outcome == "success" {
+            production_progress(completed, total, "merge")
+        } else {
+            production_progress(completed, total, stage)
+        };
+        emit_transcription_progress(app, &recording_id, run_id, stage, None, Some(percent));
         if let Some(sink) = diagnostics {
             let name = match (event.stage, event.outcome, event.attempt) {
                 ("extraction", "start", _) => "CHUNK_EXTRACTION_STARTED",
@@ -2936,6 +2994,7 @@ fn run_production_c0(
                 ("whisper", "success", Some("cpu_fallback")) => "CPU_FALLBACK_SUCCEEDED",
                 ("owner_remap", "success", _) => "OWNER_REMAP_COMPLETED",
                 ("merge", "success", _) => "PRIMARY_MERGE_COMPLETED",
+                ("merge", "failure", _) => "MERGE_FAILURE",
                 _ => "C0_EVENT",
             };
             let mut diagnostic = sink.event(name);
@@ -2948,6 +3007,7 @@ fn run_production_c0(
             if event.stage == "owner_remap" {
                 diagnostic.owned_word_count = event.word_count;
             }
+            diagnostic.conflict = event.conflict.clone();
             sink.emit(diagnostic);
             if event.stage == "whisper" && event.outcome == "success" {
                 let mut parsed = sink.event("PARSER_COMPLETED");
@@ -2959,6 +3019,9 @@ fn run_production_c0(
         }
         let _ = total;
     };
+    if let Some(sink) = diagnostics {
+        sink.emit(sink.event("MERGE_STARTED"));
+    }
     let merged = crate::transcription_chunking::orchestrate_primary_observed(
         source,
         &mut extractor,
@@ -2967,6 +3030,12 @@ fn run_production_c0(
         &mut observer,
     )
     .map_err(|error| {
+        if let Some(sink) = diagnostics {
+            let mut event = sink.event("MERGE_FAILURE");
+            event.error_category = Some("post_chunk_orchestration".into());
+            event.error_message = Some(error.to_string());
+            sink.emit(event);
+        }
         if error == "cancelled" {
             TranscriptionError::Cancelled
         } else {
@@ -2978,6 +3047,7 @@ fn run_production_c0(
         event.total_chunks = Some(total);
         event.merged_word_count = Some(merged.words.len());
         sink.emit(event);
+        sink.emit(sink.event("MERGE_SUCCESS"));
     }
     let segments = merged
         .words
@@ -3108,6 +3178,17 @@ mod tests {
         assert_eq!(transcript.text, "hello world");
         assert_eq!(transcript.segments.len(), 1);
         assert!(!transcript.segments[0].words.is_empty());
+    }
+
+    #[test]
+    fn smooths_word_overlap_across_segment_boundary_for_runtime() {
+        let path = write_whisper_fixture(
+            br#"{"segments":[{"start":0.0,"end":1.0,"text":"a","words":[{"word":"a","start":0.0,"end":0.535}]},{"start":1.0,"end":2.0,"text":"b","words":[{"word":"b","start":0.5,"end":0.95}]}]}"#,
+        );
+        let words = parse_whisper_output_for_runtime(&path).expect("runtime words parse");
+        let _ = std::fs::remove_file(path);
+        assert_eq!(words.len(), 2);
+        assert!(words[1].start >= words[0].end);
     }
 
     #[test]
@@ -5206,6 +5287,7 @@ pub fn transcribe_recording_chunked_dev(
         language: context.language.clone(),
         output_dir: paths.whisper.clone(),
         cancel: cancel.clone(),
+        gpu_failed: false,
     };
     dev_try!(provenance.event("PRIMARY_MERGE_STARTED", None, None, None));
     let merged = dev_try!(crate::transcription_chunking::orchestrate_primary_observed(
@@ -5443,8 +5525,10 @@ fn transcribe_recording_blocking_inner(
     emit_transcription_progress(
         &app,
         &recording_id,
+        &run_id,
         "preparing",
         Some(metadata.duration_seconds),
+        Some(production_progress(0, 1, "preparing")),
     );
 
     let ffmpeg_args = canonical_ffmpeg_args(
@@ -5466,6 +5550,7 @@ fn transcribe_recording_blocking_inner(
         return Err(TranscriptionError::Cancelled);
     }
     let mut conversion_command = Command::new(&ffmpeg);
+    crate::transcription_chunking::configure_background_command(&mut conversion_command);
     conversion_command
         .args(&ffmpeg_args)
         .stdout(Stdio::inherit())
@@ -5551,8 +5636,10 @@ fn transcribe_recording_blocking_inner(
     emit_transcription_progress(
         &app,
         &recording_id,
+        &run_id,
         "transcribing",
         Some(metadata.duration_seconds),
+        Some(production_progress(0, 1, "transcribing")),
     );
 
     let whisper_args = vec![
@@ -5608,8 +5695,10 @@ fn transcribe_recording_blocking_inner(
     emit_transcription_progress(
         &app,
         &recording_id,
+        &run_id,
         "finalizing",
         Some(metadata.duration_seconds),
+        Some(production_progress(0, 1, "finalizing")),
     );
 
     preserve_forensic_json(&app, &recording_id, "raw-whisper", &whisper_output_json);
@@ -5708,6 +5797,12 @@ fn transcribe_recording_blocking_inner(
             transcript
         }
         Err(error) => {
+            if let Some(sink) = production_diagnostics.as_ref() {
+                let mut event = sink.event("FINALIZATION_FAILURE");
+                event.error_category = Some("parse".into());
+                event.error_message = Some(format!("{error:?}"));
+                sink.emit(event);
+            }
             append_transcription_diagnostic(
                 &app,
                 &recording_id,
@@ -5742,7 +5837,16 @@ fn transcribe_recording_blocking_inner(
         );
         sink.emit(event);
     }
+    if let Some(sink) = production_diagnostics.as_ref() {
+        sink.emit(sink.event("FINALIZATION_STARTED"));
+    }
     let transcript_json = serde_json::to_vec_pretty(&transcript).map_err(|error| {
+        if let Some(sink) = production_diagnostics.as_ref() {
+            let mut event = sink.event("FINALIZATION_FAILURE");
+            event.error_category = Some("serialization".into());
+            event.error_message = Some(error.to_string());
+            sink.emit(event);
+        }
         append_transcription_diagnostic(
             &app,
             &recording_id,
@@ -5757,7 +5861,17 @@ fn transcribe_recording_blocking_inner(
         );
         TranscriptionError::Io(format!("Unable to serialize transcript: {error}"))
     })?;
+    if let Some(sink) = production_diagnostics.as_ref() {
+        sink.emit(sink.event("FINALIZATION_SUCCESS"));
+        sink.emit(sink.event("PERSISTENCE_STARTED"));
+    }
     std::fs::write(&transcript_path, transcript_json).map_err(|error| {
+        if let Some(sink) = production_diagnostics.as_ref() {
+            let mut event = sink.event("PERSISTENCE_FAILURE");
+            event.error_category = Some("transcript_write".into());
+            event.error_message = Some(error.to_string());
+            sink.emit(event);
+        }
         append_transcription_diagnostic(
             &app,
             &recording_id,
@@ -5777,6 +5891,12 @@ fn transcribe_recording_blocking_inner(
     })?;
 
     let conn = open_database(&app).map_err(|error| {
+        if let Some(sink) = production_diagnostics.as_ref() {
+            let mut event = sink.event("PERSISTENCE_FAILURE");
+            event.error_category = Some("database_open".into());
+            event.error_message = Some(error.to_string());
+            sink.emit(event);
+        }
         append_transcription_diagnostic(
             &app,
             &recording_id,
@@ -5799,6 +5919,12 @@ fn transcribe_recording_blocking_inner(
         )
         .optional()
         .map_err(|error| {
+            if let Some(sink) = production_diagnostics.as_ref() {
+                let mut event = sink.event("PERSISTENCE_FAILURE");
+                event.error_category = Some("database_read".into());
+                event.error_message = Some(error.to_string());
+                sink.emit(event);
+            }
             append_transcription_diagnostic(
                 &app,
                 &recording_id,
@@ -5823,6 +5949,12 @@ fn transcribe_recording_blocking_inner(
         "ready",
     )
     .map_err(|error| {
+        if let Some(sink) = production_diagnostics.as_ref() {
+            let mut event = sink.event("PERSISTENCE_FAILURE");
+            event.error_category = Some("database_update".into());
+            event.error_message = Some(error.to_string());
+            sink.emit(event);
+        }
         append_transcription_diagnostic(
             &app,
             &recording_id,
@@ -5837,6 +5969,17 @@ fn transcribe_recording_blocking_inner(
         );
         TranscriptionError::Io(error)
     })?;
+    if let Some(sink) = production_diagnostics.as_ref() {
+        sink.emit(sink.event("PERSISTENCE_SUCCESS"));
+    }
+    emit_transcription_progress(
+        &app,
+        &recording_id,
+        &run_id,
+        "finalizing",
+        Some(metadata.duration_seconds),
+        Some(production_progress(1, 1, "complete")),
+    );
     eprintln!(
         "Scribe transcription: transcript persisted recording_id={} transcript_path={} transcript_exists={} transcript_size={:?}",
         recording_id,
@@ -5939,4 +6082,28 @@ fn transcribe_recording_blocking_inner(
     }
 
     Ok(transcript)
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::production_progress;
+
+    #[test]
+    fn production_progress_is_bounded_and_monotonic_by_stage() {
+        let values = [
+            production_progress(0, 48, "preparing"),
+            production_progress(1, 48, "transcribing"),
+            production_progress(24, 48, "transcribing"),
+            production_progress(48, 48, "transcribing"),
+            production_progress(48, 48, "merge"),
+            production_progress(48, 48, "finalizing"),
+            production_progress(48, 48, "persisting"),
+            production_progress(48, 48, "complete"),
+        ];
+        assert!(values.windows(2).all(|pair| pair[1] >= pair[0]));
+        assert!(values.iter().all(|value| (0.0..=100.0).contains(value)));
+        assert!(production_progress(48, 48, "transcribing") < 100.0);
+        assert_eq!(production_progress(48, 48, "complete"), 100.0);
+        assert_eq!(production_progress(1, 0, "transcribing"), 5.0);
+    }
 }

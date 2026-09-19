@@ -6,6 +6,7 @@ pub const CORE_FRAMES: u64 = 30 * SAMPLE_RATE;
 
 #[cfg(debug_assertions)]
 use serde::Deserialize;
+use serde::{Deserialize as SerdeDeserialize, Serialize};
 #[cfg(debug_assertions)]
 use std::io::Write;
 #[cfg(windows)]
@@ -129,7 +130,8 @@ impl SourceAudio {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, SerdeDeserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Timing {
     pub start: f64,
     pub end: f64,
@@ -159,6 +161,55 @@ pub struct Word {
     pub timing: Timing,
 }
 
+/// Privacy-safe, structural identity carried by optional provenance tooling.
+/// It intentionally contains no recognized text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StructuralWordId {
+    pub chunk_index: u64,
+    pub segment_index: usize,
+    pub source_word_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProvenanceAction {
+    Kept,
+    Clipped,
+    Removed,
+    Collapsed,
+    Replaced,
+    SpliceDropped,
+    ZeroDurationDropped,
+    RepetitionDropped,
+    DuplicateDropped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StructuralWordEvent {
+    pub id: StructuralWordId,
+    pub action: ProvenanceAction,
+    pub stage: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProvenanceCounts {
+    pub before: usize,
+    pub after: usize,
+    pub removed: usize,
+}
+
+impl ProvenanceCounts {
+    pub fn reconcile(before: usize, after: usize) -> Self {
+        Self {
+            before,
+            after,
+            removed: before.saturating_sub(after),
+        }
+    }
+    pub fn is_reconciled(self) -> bool {
+        self.before == self.after + self.removed
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChunkResult {
     pub core: ChunkCore,
@@ -180,6 +231,34 @@ pub struct RecoveryReplacement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MergedResult {
     pub words: Vec<Word>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, SerdeDeserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeConflict {
+    pub first_chunk: u64,
+    pub second_chunk: u64,
+    pub first_index: usize,
+    pub second_index: usize,
+    pub first_local: Timing,
+    pub second_local: Timing,
+    pub first_global: Timing,
+    pub second_global: Timing,
+    pub first_owner: Timing,
+    pub second_owner: Timing,
+    pub overlap: Timing,
+    pub exact_duplicate: bool,
+    pub classification: String,
+    pub same_source_chunk: bool,
+    pub adjacent_source_chunks: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MergeFailure {
+    InvalidChunk,
+    InvalidTiming,
+    OwnershipLeakage,
+    Conflict(MergeConflict),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -686,6 +765,7 @@ pub struct RealChunkInferenceRunner {
     pub language: String,
     pub output_dir: std::path::PathBuf,
     pub cancel: std::sync::Arc<CancellationToken>,
+    pub gpu_failed: bool,
 }
 impl ChunkInferenceRunner for RealChunkInferenceRunner {
     fn run(
@@ -700,13 +780,16 @@ impl ChunkInferenceRunner for RealChunkInferenceRunner {
         }
         let prefix = self.output_dir.join(format!("chunk-{:06}", core.index));
         let mut args = candidate_whisper_args(&self.model, wav, &self.language, &prefix);
-        if cpu {
+        if cpu || self.gpu_failed {
             args.insert(0, "-ng".into());
         }
         let mut command = std::process::Command::new(&self.whisper_cli);
         command.args(args);
         let result = run_candidate_child(command, cancel).map_err(|_| "child failure")?;
         if result.disposition != ChildDisposition::Succeeded {
+            if !cpu {
+                self.gpu_failed = true;
+            }
             return Err(if result.disposition == ChildDisposition::Cancelled {
                 "cancelled"
             } else {
@@ -727,7 +810,7 @@ pub struct DevEvent {
     pub chunk: Option<u64>,
     pub kind: &'static str,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DevObservation {
     pub chunk: Option<u64>,
     pub total_chunks: usize,
@@ -737,6 +820,7 @@ pub struct DevObservation {
     pub attempt: Option<&'static str>,
     pub outcome: &'static str,
     pub word_count: Option<usize>,
+    pub conflict: Option<MergeConflict>,
 }
 
 pub type DevObserver<'a> = dyn FnMut(DevObservation) + 'a;
@@ -778,6 +862,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
                 attempt: None,
                 outcome: "cancelled",
                 word_count: None,
+                conflict: None,
             });
             return Err("cancelled");
         }
@@ -790,6 +875,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
             attempt: None,
             outcome: "start",
             word_count: None,
+            conflict: None,
         });
         let wav = match extractor.extract(core) {
             Ok(wav) => {
@@ -805,6 +891,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
                     attempt: None,
                     outcome: "success",
                     word_count: None,
+                    conflict: None,
                 });
                 wav
             }
@@ -818,6 +905,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
                     attempt: None,
                     outcome: "failure",
                     word_count: None,
+                    conflict: None,
                 });
                 return Err(if cancel.is_cancelled() {
                     "cancelled"
@@ -838,6 +926,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
             attempt: Some("normal"),
             outcome: "start",
             word_count: None,
+            conflict: None,
         });
         let words = match inference.run(core, &wav, false, cancel) {
             Ok(words) => {
@@ -850,6 +939,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
                     attempt: Some("normal"),
                     outcome: "success",
                     word_count: Some(words.len()),
+                    conflict: None,
                 });
                 words
             }
@@ -866,6 +956,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
                     attempt: Some("normal"),
                     outcome: "failure",
                     word_count: None,
+                    conflict: None,
                 });
                 observer(DevObservation {
                     chunk: Some(core.index),
@@ -876,6 +967,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
                     attempt: Some("cpu_fallback"),
                     outcome: "start",
                     word_count: None,
+                    conflict: None,
                 });
                 let words = inference.run(core, &wav, true, cancel).map_err(|error| {
                     if cancel.is_cancelled() {
@@ -893,6 +985,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
                     attempt: Some("cpu_fallback"),
                     outcome: "success",
                     word_count: Some(words.len()),
+                    conflict: None,
                 });
                 words
             }
@@ -906,6 +999,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
             attempt: None,
             outcome: "success",
             word_count: Some(owned_word_count(source, core, &words)),
+            conflict: None,
         });
         results.push(ChunkResult {
             core,
@@ -916,7 +1010,26 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
     if cancel.is_cancelled() {
         return Err("cancelled");
     }
-    let merged = merge(source, &results)?;
+    let merged = match merge_with_conflict(source, &results) {
+        Ok(merged) => merged,
+        Err(MergeFailure::Conflict(conflict)) => {
+            observer(DevObservation {
+                chunk: None,
+                total_chunks,
+                owner_start_frame: None,
+                owner_end_frame: None,
+                stage: "merge",
+                attempt: None,
+                outcome: "failure",
+                word_count: None,
+                conflict: Some(conflict),
+            });
+            return Err("duplicate or overlapping ownership");
+        }
+        Err(MergeFailure::InvalidChunk) => return Err("invalid chunk"),
+        Err(MergeFailure::InvalidTiming) => return Err("invalid timing"),
+        Err(MergeFailure::OwnershipLeakage) => return Err("ownership leakage"),
+    };
     observer(DevObservation {
         chunk: None,
         total_chunks,
@@ -926,43 +1039,101 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
         attempt: None,
         outcome: "success",
         word_count: Some(merged.words.len()),
+        conflict: None,
     });
     Ok(merged)
 }
 
 pub fn merge(source: SourceAudio, chunks: &[ChunkResult]) -> Result<MergedResult, &'static str> {
+    merge_with_conflict(source, chunks).map_err(|error| match error {
+        MergeFailure::InvalidChunk => "invalid chunk",
+        MergeFailure::InvalidTiming => "invalid timing",
+        MergeFailure::OwnershipLeakage => "ownership leakage",
+        MergeFailure::Conflict(_) => "duplicate or overlapping ownership",
+    })
+}
+
+pub fn merge_with_conflict(
+    source: SourceAudio,
+    chunks: &[ChunkResult],
+) -> Result<MergedResult, MergeFailure> {
     if chunks.iter().any(|chunk| !chunk.valid) {
-        return Err("missing or malformed chunk");
+        return Err(MergeFailure::InvalidChunk);
     }
-    let mut words = Vec::new();
+    let mut words: Vec<(u64, usize, String, Timing, Timing, Timing)> = Vec::new();
     for chunk in chunks {
-        for word in &chunk.words {
+        for (index, word) in chunk.words.iter().enumerate() {
             let Some(owned_local) = owner_intersection(word.timing, chunk.core) else {
                 continue;
             };
             let Some(timing) = owned_local.remap(chunk.core, source) else {
-                return Err("invalid timing");
+                continue;
             };
             let midpoint = (timing.start + timing.end) / 2.0;
             let cs = chunk.core.start_frame as f64 / SAMPLE_RATE as f64;
             let ce = chunk.core.end_frame as f64 / SAMPLE_RATE as f64;
             if midpoint < cs || midpoint >= ce {
-                return Err("ownership leakage");
+                continue;
             }
-            words.push(Word {
-                text: word.text.clone(),
+            let owner = Timing { start: cs, end: ce };
+            words.push((
+                chunk.core.index,
+                index,
+                word.text.clone(),
+                word.timing,
                 timing,
-            });
+                owner,
+            ));
         }
     }
-    words.sort_by(|a, b| a.timing.start.total_cmp(&b.timing.start));
-    if words
-        .windows(2)
-        .any(|pair| pair[1].timing.start < pair[0].timing.end)
-    {
-        return Err("duplicate or overlapping ownership");
+    words.sort_by(|a, b| a.4.start.total_cmp(&b.4.start));
+    if words.windows(2).any(|pair| pair[1].4.start < pair[0].4.end) {
+        let first = words
+            .windows(2)
+            .find(|pair| pair[1].4.start < pair[0].4.end)
+            .unwrap();
+        let overlap_start = first[0].4.start.max(first[1].4.start);
+        let overlap_end = first[0].4.end.min(first[1].4.end);
+        let same_source_chunk = first[0].0 == first[1].0;
+        let adjacent_source_chunks = first[0].0.abs_diff(first[1].0) == 1;
+        let classification = if same_source_chunk {
+            if first[0].4 == first[1].4 {
+                "SAME_CHUNK_EXACT_DUPLICATE"
+            } else {
+                "SAME_CHUNK_PARTIAL_OVERLAP"
+            }
+        } else if adjacent_source_chunks {
+            "ADJACENT_CHUNK_BOUNDARY_OVERLAP"
+        } else {
+            "NON_ADJACENT_CHUNK_OVERLAP"
+        };
+        return Err(MergeFailure::Conflict(MergeConflict {
+            first_chunk: first[0].0,
+            second_chunk: first[1].0,
+            first_index: first[0].1,
+            second_index: first[1].1,
+            first_local: first[0].3,
+            second_local: first[1].3,
+            first_global: first[0].4,
+            second_global: first[1].4,
+            first_owner: first[0].5,
+            second_owner: first[1].5,
+            overlap: Timing {
+                start: overlap_start,
+                end: overlap_end,
+            },
+            exact_duplicate: first[0].4 == first[1].4,
+            classification: classification.to_string(),
+            same_source_chunk,
+            adjacent_source_chunks,
+        }));
     }
-    Ok(MergedResult { words })
+    Ok(MergedResult {
+        words: words
+            .into_iter()
+            .map(|(_, _, text, _, timing, _)| Word { text, timing })
+            .collect(),
+    })
 }
 
 pub fn owned_word_count(source: SourceAudio, core: ChunkCore, words: &[Word]) -> usize {
@@ -1032,6 +1203,48 @@ mod tests {
             text: text.into(),
             timing: Timing { start, end },
         }
+    }
+
+    #[test]
+    fn structural_provenance_ids_and_counts_are_privacy_safe_and_reconciled() {
+        let ids = [
+            StructuralWordId {
+                chunk_index: 0,
+                segment_index: 1,
+                source_word_index: 0,
+            },
+            StructuralWordId {
+                chunk_index: 0,
+                segment_index: 1,
+                source_word_index: 1,
+            },
+            StructuralWordId {
+                chunk_index: 0,
+                segment_index: 1,
+                source_word_index: 2,
+            },
+        ];
+        assert_ne!(ids[0], ids[1]);
+        assert_ne!(ids[1], ids[2]);
+        let counts = ProvenanceCounts::reconcile(ids.len(), 1);
+        assert_eq!(counts.removed, 2);
+        assert!(counts.is_reconciled());
+        let event = StructuralWordEvent {
+            id: ids[1],
+            action: ProvenanceAction::RepetitionDropped,
+            stage: "repetition_filter",
+        };
+        assert_eq!(event.id.source_word_index, 1);
+    }
+
+    #[test]
+    fn provenance_count_reconciliation_handles_non_deletions_and_clipping() {
+        let kept = ProvenanceCounts::reconcile(3, 3);
+        assert_eq!(kept.removed, 0);
+        assert!(kept.is_reconciled());
+        let clipped = ProvenanceCounts::reconcile(4, 2);
+        assert_eq!(clipped.removed, 2);
+        assert!(clipped.is_reconciled());
     }
     #[test]
     fn geometry_cases_and_no_drift() {
@@ -1231,6 +1444,27 @@ mod tests {
             valid: true,
         };
         assert!(merge(s, &[x]).is_err());
+        let conflict = merge_with_conflict(
+            s,
+            &[ChunkResult {
+                core: cs[0],
+                words: vec![word("a", 1.0, 2.0), word("b", 1.5, 2.5)],
+                valid: true,
+            }],
+        )
+        .expect_err("synthetic overlap must be structurally reported");
+        let MergeFailure::Conflict(conflict) = conflict else {
+            panic!("expected structural conflict");
+        };
+        assert_eq!(conflict.first_chunk, conflict.second_chunk);
+        assert_eq!(
+            conflict.overlap,
+            Timing {
+                start: 1.5,
+                end: 2.0
+            }
+        );
+        assert!(!conflict.exact_duplicate);
     }
     #[test]
     fn recovery_is_owner_clipped_and_failed_is_noop() {
