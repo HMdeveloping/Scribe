@@ -319,6 +319,10 @@ button {
   align-items: center;
 }
 
+.app:not(.is-macos) .sidebar.is-collapsed .sidebar-header .sidebar-toggle {
+  margin-left: 0;
+}
+
 .app:not(.is-macos) .sidebar.is-collapsed .sidebar-top,
 .app:not(.is-macos) .sidebar.is-collapsed .sidebar-header,
 .app:not(.is-macos) .sidebar.is-collapsed .navigation,
