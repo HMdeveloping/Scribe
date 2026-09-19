@@ -36,7 +36,7 @@ import {
 } from "./components/RecordingWorkflow";
 import {
   HomeRecentRecordings,
-  isSelectionOwnedClick,
+  MainContentSelectionBoundary,
   localizedRecordingTitle,
   MoveToProjectDialog,
   ProjectDialog,
@@ -44,6 +44,7 @@ import {
   ProjectsView,
   RecordingsView,
   RenameDialog,
+  SidebarSelectionBoundary,
 } from "./components/LibraryViews";
 import { ContextMenu, type ContextMenuAction, type ContextMenuState } from "./components/ContextMenu";
 import { localizedModel, SettingsView, type SettingsViewData, type UpdateProgress, type UpdateStatus } from "./components/SettingsView";
@@ -346,8 +347,7 @@ function App() {
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("auto");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const titlebarToggleRef = useRef<HTMLButtonElement>(null);
-  const [selectionClearSignal, setSelectionClearSignal] = useState(0);
-  const homeClearSelectionRef = useRef<() => void>(() => {});
+  const activeSelectionClearRef = useRef<() => void>(() => {});
   const [isNarrowSidebarRange, setIsNarrowSidebarRange] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(max-width: 980px)").matches;
@@ -1290,9 +1290,7 @@ function App() {
         </button>
       </div>
       <div className="app-body">
-      <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClickCapture={() => {
-        setSelectionClearSignal((current) => current + 1);
-      }}>
+      <SidebarSelectionBoundary className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClearSelection={() => activeSelectionClearRef.current()}>
         <div className="sidebar-top">
           <div className="sidebar-header">
             <button className="brand brand-button" onClick={() => navigate({ view: "home" }, "top")} aria-label={t("home")} title={sidebarCollapsed ? t("home") : undefined}>
@@ -1385,10 +1383,10 @@ function App() {
           <Settings size={18} strokeWidth={1.8} />
           <span>{t("settings")}</span>
         </button>
-      </aside>
+      </SidebarSelectionBoundary>
 
-      <main className="main-content" onClick={(event) => {
-        if (view === "home" && !isSelectionOwnedClick(event.target)) homeClearSelectionRef.current();
+      <MainContentSelectionBoundary className="main-content" onBackgroundClick={() => {
+        if (["home", "recordings", "archived-recordings", "project-detail"].includes(view)) activeSelectionClearRef.current();
       }}>
         {finalizing ? <FinalizingView
           errorKind={transcriptionError?.kind}
@@ -1467,7 +1465,7 @@ function App() {
           onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
           canGoBack={canGoBack}
           onBack={goBack}
-          selectionClearSignal={selectionClearSignal}
+          selectionClearRef={activeSelectionClearRef}
         />
         : view === "archived-recordings" ? <RecordingsView
           recordings={archivedRecordings}
@@ -1483,6 +1481,7 @@ function App() {
           archived
           canGoBack={canGoBack}
           onBack={goBack}
+          selectionClearRef={activeSelectionClearRef}
         />
         : view === "project-detail" && activeProject ? <ProjectDetailView
           project={activeProject}
@@ -1500,7 +1499,7 @@ function App() {
           getRecordingActions={recordingActions}
           onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
           onBack={goBack}
-          selectionClearSignal={selectionClearSignal}
+          selectionClearRef={activeSelectionClearRef}
         />
         : view === "settings" ? <SettingsView
           appVersion={appVersion}
@@ -1582,12 +1581,11 @@ function App() {
             onDeleteRecordings={deleteRecordings}
             getRecordingActions={recordingActions}
             onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
-            clearSelectionRef={homeClearSelectionRef}
-            selectionClearSignal={selectionClearSignal}
+            clearSelectionRef={activeSelectionClearRef}
           />
         </div>
         )}
-      </main>
+      </MainContentSelectionBoundary>
       </div>
       {projectDialogOpen ? (
         <ProjectDialog

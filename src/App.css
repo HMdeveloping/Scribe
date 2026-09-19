@@ -1256,7 +1256,7 @@ button {
 }
 
 .library-view {
-  width: min(850px, calc(100% - 72px));
+  width: min(900px, calc(100% - 72px));
   height: 100%;
   min-height: 0;
   margin: 0 auto;

@@ -1,5 +1,5 @@
 import { Archive, AudioLines, Check, FolderClosed, FolderInput, MoreHorizontal, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type MutableRefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type MouseEvent, type MutableRefObject, type ReactNode } from "react";
 import { languageLocales, type AppLanguage, type TFunction } from "../i18n";
 import type { Project, RecordingSummary } from "../types/library";
 import type { ContextMenuAction } from "./ContextMenu";
@@ -35,6 +35,45 @@ function recordingCountLabel(count: number, t: TFunction) {
 
 export function localizedRecordingTitle(title: string, t: TFunction) {
   return title === "New recording" ? t("newRecordingTitle") : title;
+}
+
+export function SidebarSelectionBoundary({
+  className,
+  onClearSelection,
+  children,
+}: {
+  className?: string;
+  onClearSelection: () => void;
+  children: ReactNode;
+}) {
+  return <aside className={className} onClickCapture={onClearSelection}>{children}</aside>;
+}
+
+export function MainContentSelectionBoundary({
+  className,
+  onBackgroundClick,
+  children,
+}: {
+  className?: string;
+  onBackgroundClick: () => void;
+  children: ReactNode;
+}) {
+  return <main className={className} onClick={(event) => {
+    if (!isSelectionOwnedClick(event.target)) onBackgroundClick();
+  }}>{children}</main>;
+}
+
+function useRegisterSelectionClear(
+  selectionClearRef: MutableRefObject<() => void> | undefined,
+  clear: () => void,
+) {
+  useEffect(() => {
+    if (!selectionClearRef) return;
+    selectionClearRef.current = clear;
+    return () => {
+      if (selectionClearRef.current === clear) selectionClearRef.current = () => {};
+    };
+  }, [selectionClearRef, clear]);
 }
 
 function reconcileSelectedIds(current: Set<string>, visibleIds: string[]) {
@@ -131,7 +170,6 @@ export function HomeRecentRecordings({
   getRecordingActions,
   onRecordingContextMenu,
   clearSelectionRef,
-  selectionClearSignal = 0,
 }: {
   recordings: RecordingSummary[];
   t: TFunction;
@@ -144,7 +182,6 @@ export function HomeRecentRecordings({
   getRecordingActions: (recording: RecordingSummary) => ContextMenuAction[];
   onRecordingContextMenu: (event: MouseEvent, recording: RecordingSummary) => void;
   clearSelectionRef?: MutableRefObject<() => void>;
-  selectionClearSignal?: number;
 }) {
   const visibleRecordings = recordings.slice(0, 5);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -156,14 +193,9 @@ export function HomeRecentRecordings({
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  useEffect(() => { if (selectionClearSignal > 0) setSelectedIds(new Set()); }, [selectionClearSignal]);
-
-  useEffect(() => {
-    if (!clearSelectionRef) return;
-    clearSelectionRef.current = () => setSelectedIds(new Set());
-    return () => { clearSelectionRef.current = () => {}; };
-  }, [clearSelectionRef]);
+  useRegisterSelectionClear(clearSelectionRef, clearSelection);
 
   useEffect(() => {
     setSelectedIds((current) => reconcileSelectedIds(current, visibleIds));
@@ -234,9 +266,7 @@ export function HomeRecentRecordings({
   }
 
   return (
-    <section className="recent" onClick={(event) => {
-      if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
-    }}>
+    <section className="recent">
       <div className="recent-header">
         <h2>{t("recentRecordings")}</h2>
         {recordings.length > 0 ? (
@@ -248,9 +278,6 @@ export function HomeRecentRecordings({
         <div
           ref={listRef}
           className="recording-list selectable-list"
-          onClick={(event) => {
-            if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
-          }}
           onPointerLeave={() => setSelectionAffordanceHovered(false)}
         >
           <div className="bulk-action-bar">
@@ -563,7 +590,7 @@ export function RecordingsView({
   archived = false,
   canGoBack,
   onBack,
-  selectionClearSignal = 0,
+  selectionClearRef,
 }: {
   recordings: RecordingSummary[];
   t: TFunction;
@@ -579,7 +606,7 @@ export function RecordingsView({
   archived?: boolean;
   canGoBack: boolean;
   onBack: () => void;
-  selectionClearSignal?: number;
+  selectionClearRef?: MutableRefObject<() => void>;
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionAffordanceHovered, setSelectionAffordanceHovered] = useState(false);
@@ -589,8 +616,9 @@ export function RecordingsView({
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  useEffect(() => { if (selectionClearSignal > 0) setSelectedIds(new Set()); }, [selectionClearSignal]);
+  useRegisterSelectionClear(selectionClearRef, clearSelection);
 
   useEffect(() => setSelectedIds(new Set()), [archived]);
   useEffect(() => {
@@ -661,9 +689,7 @@ export function RecordingsView({
   }
 
   return (
-    <section className="library-view" onClick={(event) => {
-      if (event.target === event.currentTarget && selectedIds.size > 0) setSelectedIds(new Set());
-    }}>
+    <section className="library-view">
       <header className="library-header">
         <div>
           {canGoBack ? <BackButton t={t} onBack={onBack} /> : null}
@@ -676,9 +702,7 @@ export function RecordingsView({
         ) : null}
       </header>
       {recordings.length > 0 ? (
-        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
-      if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
-        }}>
+        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)}>
           <div className="bulk-action-bar">
             <button
               className={`selection-circle select-all-control${!showHeaderSelector ? " is-hidden" : ""}${allSelected ? " is-selected" : ""}${someSelected ? " is-indeterminate" : ""}`}
@@ -750,7 +774,7 @@ export function ProjectDetailView({
   getRecordingActions,
   onRecordingContextMenu,
   onBack,
-  selectionClearSignal = 0,
+  selectionClearRef,
 }: {
   project: Project;
   recordings: RecordingSummary[];
@@ -767,7 +791,7 @@ export function ProjectDetailView({
   getRecordingActions: (recording: RecordingSummary) => ContextMenuAction[];
   onRecordingContextMenu: (event: MouseEvent, recording: RecordingSummary) => void;
   onBack: () => void;
-  selectionClearSignal?: number;
+  selectionClearRef?: MutableRefObject<() => void>;
 }) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftName, setDraftName] = useState(project.name);
@@ -780,8 +804,9 @@ export function ProjectDetailView({
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  useEffect(() => { if (selectionClearSignal > 0) setSelectedIds(new Set()); }, [selectionClearSignal]);
+  useRegisterSelectionClear(selectionClearRef, clearSelection);
 
   useEffect(() => {
     setDraftName(project.name);
@@ -868,9 +893,7 @@ export function ProjectDetailView({
   }
 
   return (
-    <section className="library-view" onClick={(event) => {
-      if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
-    }}>
+    <section className="library-view">
       <header className="library-header">
         <div>
           <BackButton t={t} onBack={onBack} />
@@ -917,9 +940,7 @@ export function ProjectDetailView({
         </div>
       </header>
       {recordings.length > 0 ? (
-        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
-          if (selectedIds.size > 0) clearSelectionFromBackground(event, () => setSelectedIds(new Set()));
-        }}>
+        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)}>
           <div className="bulk-action-bar">
             <button
               className={`selection-circle select-all-control${!showHeaderSelector ? " is-hidden" : ""}${allSelected ? " is-selected" : ""}${someSelected ? " is-indeterminate" : ""}`}
