@@ -1289,7 +1289,15 @@ function App() {
         </button>
       </div>
       <div className="app-body">
-      <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClickCapture={() => {
+      <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClickCapture={(event) => {
+        if (import.meta.env.DEV) {
+          const target = event.target instanceof Element ? event.target.closest("button") : null;
+          console.debug("[SCRIBE_SIDEBAR_DEBUG]", {
+            clickedDestination: target?.textContent?.trim() || target?.getAttribute("aria-label") || target?.className || "sidebar-empty-space",
+            currentView: view,
+            navigationCallbackExecuted: false,
+          });
+        }
         window.dispatchEvent(new Event("scribe-sidebar-interaction"));
       }}>
         <div className="sidebar-top">
