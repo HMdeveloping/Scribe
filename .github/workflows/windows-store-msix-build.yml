@@ -99,9 +99,15 @@ jobs:
           $namespaceManager.AddNamespace("uap10", "http://schemas.microsoft.com/appx/manifest/uap/windows10/10")
           $namespaceManager.AddNamespace("rescap", "http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities")
           $application = $preflightManifest.SelectSingleNode("/appx:Package/appx:Applications/appx:Application", $namespaceManager)
+          $capabilities = $preflightManifest.SelectNodes("/appx:Package/appx:Capabilities", $namespaceManager)
           $runFullTrust = $preflightManifest.SelectSingleNode("/appx:Package/appx:Capabilities/rescap:Capability[@Name='runFullTrust']", $namespaceManager)
+          $microphone = $preflightManifest.SelectSingleNode("/appx:Package/appx:Capabilities/appx:DeviceCapability[@Name='microphone']", $namespaceManager)
           if (-not $manifestRoot.GetAttribute("rescap", "http://www.w3.org/2000/xmlns/")) { throw "MSIX manifest preflight failed: rescap namespace is missing" }
+          if ($capabilities.Count -ne 1) { throw "MSIX manifest preflight failed: expected exactly one Capabilities block" }
+          $capabilityChildren = $capabilities[0].ChildNodes
           if (-not $runFullTrust) { throw "MSIX manifest preflight failed: runFullTrust capability is missing" }
+          if (-not $microphone) { throw "MSIX manifest preflight failed: microphone DeviceCapability is missing" }
+          if ($capabilityChildren.Count -ne 2 -or $capabilityChildren[0].NamespaceURI -ne "http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" -or $capabilityChildren[0].LocalName -ne "Capability" -or $capabilityChildren[0].GetAttribute("Name") -ne "runFullTrust" -or $capabilityChildren[1].NamespaceURI -ne "http://schemas.microsoft.com/appx/manifest/foundation/windows10" -or $capabilityChildren[1].LocalName -ne "DeviceCapability" -or $capabilityChildren[1].GetAttribute("Name") -ne "microphone") { throw "MSIX manifest preflight failed: expected rescap runFullTrust before microphone DeviceCapability" }
           if (-not $application -or $application.GetAttribute("RuntimeBehavior", "http://schemas.microsoft.com/appx/manifest/uap/windows10/10") -ne "packagedClassicApp" -or $application.GetAttribute("TrustLevel", "http://schemas.microsoft.com/appx/manifest/uap/windows10/10") -ne "mediumIL") { throw "MSIX manifest preflight failed: packagedClassicApp/mediumIL declaration is missing" }
           Write-Host "MSIX manifest preflight passed: rescap/runFullTrust and packagedClassicApp/mediumIL are present."
           $makeAppx = $null
