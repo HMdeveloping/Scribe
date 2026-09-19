@@ -424,6 +424,8 @@ export function ProjectsView({
   onProjectContextMenu,
   canGoBack,
   onBack,
+  selectedIds,
+  setSelectedIds,
 }: {
   projects: Project[];
   t: TFunction;
@@ -434,8 +436,9 @@ export function ProjectsView({
   onProjectContextMenu: (event: MouseEvent, project: Project) => void;
   canGoBack: boolean;
   onBack: () => void;
+  selectedIds: Set<string>;
+  setSelectedIds: Dispatch<SetStateAction<Set<string>>>;
 }) {
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionAffordanceHovered, setSelectionAffordanceHovered] = useState(false);
   const anchorIndexRef = useRef<number | null>(null);
   const visibleIds = projects.map((project) => project.id);
@@ -517,7 +520,9 @@ export function ProjectsView({
         </button>
       </header>
       {projects.length > 0 ? (
-        <div className="project-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)}>
+        <div className="project-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)} onClick={(event) => {
+          if (!isSelectionOwnedClick(event.target)) setSelectedIds(new Set());
+        }}>
           <div className="bulk-action-bar">
             <button
               className={`selection-circle select-all-control${!showHeaderSelector ? " is-hidden" : ""}${allSelected ? " is-selected" : ""}${someSelected ? " is-indeterminate" : ""}`}

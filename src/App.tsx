@@ -351,6 +351,7 @@ function App() {
   const titlebarToggleRef = useRef<HTMLButtonElement>(null);
   const activeSelectionClearRef = useRef<() => void>(() => {});
   const [sharedRecordingSelectedIds, setSharedRecordingSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [isNarrowSidebarRange, setIsNarrowSidebarRange] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(max-width: 980px)").matches;
@@ -1286,6 +1287,7 @@ function App() {
 
   function clearSharedRecordingSelection() {
     setSharedRecordingSelectedIds(new Set());
+    setSelectedProjectIds(new Set());
   }
 
   return (
@@ -1301,6 +1303,7 @@ function App() {
       <SidebarSelectionBoundary className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClearSelection={() => {
         activeSelectionClearRef.current();
         setSharedRecordingSelectedIds(new Set());
+        setSelectedProjectIds(new Set());
       }} onPointerDownCapture={() => setSharedRecordingSelectedIds(new Set())}>
         <div className="sidebar-top">
           <div className="sidebar-header">
@@ -1400,6 +1403,7 @@ function App() {
       <MainContentSelectionBoundary className="main-content" onBackgroundClick={() => {
         if (view === "home") activeSelectionClearRef.current();
         if (["recordings", "archived-recordings", "project-detail"].includes(view)) setSharedRecordingSelectedIds(new Set());
+        if (view === "projects") setSelectedProjectIds(new Set());
       }}>
         {finalizing ? <FinalizingView
           errorKind={transcriptionError?.kind}
@@ -1463,6 +1467,8 @@ function App() {
           onProjectContextMenu={(event, project) => openContextMenu(event, projectActions(project))}
           canGoBack={canGoBack}
           onBack={goBack}
+          selectedIds={selectedProjectIds}
+          setSelectedIds={setSelectedProjectIds}
         />
         : view === "recordings" ? <RecordingsView
           recordings={recordings}
