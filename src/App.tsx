@@ -1289,7 +1289,7 @@ function App() {
         </button>
       </div>
       <div className="app-body">
-      <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClick={() => {
+      <aside className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClickCapture={() => {
         window.dispatchEvent(new Event("scribe-sidebar-interaction"));
       }}>
         <div className="sidebar-top">
