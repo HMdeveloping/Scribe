@@ -295,11 +295,24 @@ button {
 /* Windows collapsed controls share the visible 76px rail, not its former
    content-box-plus-padding size. Expanded mode keeps the original layout. */
 .app:not(.is-macos) .sidebar.is-collapsed {
+  position: relative;
   box-sizing: border-box;
   width: var(--sidebar-collapsed-width);
   min-width: var(--sidebar-collapsed-width);
+  border-right: 0;
   padding-right: 0;
   padding-left: 0;
+}
+
+.app:not(.is-macos) .sidebar.is-collapsed::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(0, 0, 0, 0.055);
+  pointer-events: none;
 }
 
 .app:not(.is-macos) .sidebar.is-collapsed .sidebar-header {
@@ -310,8 +323,14 @@ button {
 .app:not(.is-macos) .sidebar.is-collapsed .sidebar-header,
 .app:not(.is-macos) .sidebar.is-collapsed .navigation,
 .app:not(.is-macos) .sidebar.is-collapsed .sidebar-section {
-  width: 100%;
+  width: var(--sidebar-collapsed-width);
   box-sizing: border-box;
+}
+
+.app:not(.is-macos) .sidebar.is-collapsed .sidebar-top,
+.app:not(.is-macos) .sidebar.is-collapsed .navigation,
+.app:not(.is-macos) .sidebar.is-collapsed .sidebar-section {
+  align-items: center;
 }
 
 .app:not(.is-macos) .sidebar:not(.is-collapsed) .sidebar-header .sidebar-toggle {
