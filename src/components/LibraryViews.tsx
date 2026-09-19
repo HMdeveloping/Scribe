@@ -584,12 +584,11 @@ export function ProjectsView({
   );
 }
 
-export function RecordingsView({
+export function RecordingSelectionList({
   recordings,
   t,
   appLanguage,
   onOpenRecording,
-  onOpenArchived,
   onMoveRecordings,
   onArchiveRecordings,
   onRestoreRecordings,
@@ -597,27 +596,25 @@ export function RecordingsView({
   getRecordingActions,
   onRecordingContextMenu,
   archived = false,
-  canGoBack,
-  onBack,
-  selectionClearRef,
+  emptyState = "recordings",
+  selectedIds,
+  setSelectedIds,
 }: {
   recordings: RecordingSummary[];
   t: TFunction;
   appLanguage: AppLanguage;
   onOpenRecording: (id: string) => void;
-  onOpenArchived?: () => void;
-  onMoveRecordings: (recordingIds: string[], projectId: string | null) => void;
+  onMoveRecordings: (recordingIds: string[]) => void;
   onArchiveRecordings: (recordingIds: string[]) => Promise<void> | void;
-  onRestoreRecordings: (recordingIds: string[]) => Promise<void> | void;
+  onRestoreRecordings?: (recordingIds: string[]) => Promise<void> | void;
   onDeleteRecordings: (recordingIds: string[]) => Promise<boolean> | boolean;
   getRecordingActions: (recording: RecordingSummary) => ContextMenuAction[];
   onRecordingContextMenu: (event: MouseEvent, recording: RecordingSummary) => void;
   archived?: boolean;
-  canGoBack: boolean;
-  onBack: () => void;
-  selectionClearRef?: MutableRefObject<() => void>;
+  emptyState?: "recordings" | "project";
+  selectedIds: Set<string>;
+  setSelectedIds: Dispatch<SetStateAction<Set<string>>>;
 }) {
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionAffordanceHovered, setSelectionAffordanceHovered] = useState(false);
   const anchorIndexRef = useRef<number | null>(null);
   const visibleIds = recordings.map((recording) => recording.id);
@@ -625,10 +622,6 @@ export function RecordingsView({
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const someSelected = selectedCount > 0 && !allSelected;
   const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
-
-  useRegisterSelectionClear(selectionClearRef, clearSelection);
-
   useEffect(() => setSelectedIds(new Set()), [archived]);
   useEffect(() => {
     setSelectedIds((current) => reconcileSelectedIds(current, visibleIds));
@@ -698,20 +691,17 @@ export function RecordingsView({
   }
 
   return (
-    <section className="library-view">
-      <header className="library-header">
-        <div>
-          {canGoBack ? <BackButton t={t} onBack={onBack} /> : null}
-          <h1>{archived ? t("archived") : t("recordings")}</h1>
-        </div>
-        {!archived && onOpenArchived ? (
-          <button className="library-secondary-button" onClick={onOpenArchived}>
-            <Archive size={16} />{t("archived")}
-          </button>
-        ) : null}
-      </header>
+    <div className="recording-selection-surface">
       {recordings.length > 0 ? (
-        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)}>
+        <div
+          className="recording-list selectable-list"
+          onPointerLeave={() => setSelectionAffordanceHovered(false)}
+          onClick={(event) => {
+            const target = event.target;
+            if (target instanceof Element && target.closest(".recording-row, button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true']")) return;
+            setSelectedIds(new Set());
+          }}
+        >
           <div className="bulk-action-bar">
             <button
               className={`selection-circle select-all-control${!showHeaderSelector ? " is-hidden" : ""}${allSelected ? " is-selected" : ""}${someSelected ? " is-indeterminate" : ""}`}
@@ -727,11 +717,11 @@ export function RecordingsView({
                 <span>{selectedCount} {t("selected")}</span>
                 {!archived ? (
                   <>
-                    <button onClick={() => onMoveRecordings([...selectedIds], null)}><FolderInput size={15} />{t("moveToProject")}</button>
+                    <button onClick={() => onMoveRecordings([...selectedIds])}><FolderInput size={15} />{t("moveToProject")}</button>
                     <button onClick={() => void finishBulk(onArchiveRecordings([...selectedIds]))}><Archive size={15} />{t("archive")}</button>
                   </>
                 ) : (
-                  <button onClick={() => void finishBulk(onRestoreRecordings([...selectedIds]))}><RotateCcw size={15} />{t("restore")}</button>
+                  <button onClick={() => void finishBulk(onRestoreRecordings?.([...selectedIds]))}><RotateCcw size={15} />{t("restore")}</button>
                 )}
                 <button className="is-destructive" onClick={() => void finishBulk(onDeleteRecordings([...selectedIds]))}><Trash2 size={15} />{t("deletePermanently")}</button>
                 </>
@@ -755,16 +745,77 @@ export function RecordingsView({
           ))}
         </div>
       ) : (
-        <div className="empty-state library-empty-state">
-          <div className="empty-icon">
-            <AudioLines size={20} strokeWidth={1.7} />
-          </div>
-          <h3>{t("noRecordings")}</h3>
-          <p>{t("recordingsAppear")}</p>
-        </div>
+        emptyState === "project"
+          ? <p className="library-empty-copy">{t("noRecordings")}</p>
+          : <div className="empty-state library-empty-state">
+              <div className="empty-icon"><AudioLines size={20} strokeWidth={1.7} /></div>
+              <h3>{t("noRecordings")}</h3>
+              <p>{t("recordingsAppear")}</p>
+            </div>
       )}
-    </section>
+    </div>
   );
+}
+
+export function RecordingsView({
+  recordings,
+  t,
+  appLanguage,
+  onOpenRecording,
+  onOpenArchived,
+  onMoveRecordings,
+  onArchiveRecordings,
+  onRestoreRecordings,
+  onDeleteRecordings,
+  getRecordingActions,
+  onRecordingContextMenu,
+  archived = false,
+  canGoBack,
+  onBack,
+  selectedIds,
+  setSelectedIds,
+}: {
+  recordings: RecordingSummary[];
+  t: TFunction;
+  appLanguage: AppLanguage;
+  onOpenRecording: (id: string) => void;
+  onOpenArchived?: () => void;
+  onMoveRecordings: (recordingIds: string[], projectId: string | null) => void;
+  onArchiveRecordings: (recordingIds: string[]) => Promise<void> | void;
+  onRestoreRecordings: (recordingIds: string[]) => Promise<void> | void;
+  onDeleteRecordings: (recordingIds: string[]) => Promise<boolean> | boolean;
+  getRecordingActions: (recording: RecordingSummary) => ContextMenuAction[];
+  onRecordingContextMenu: (event: MouseEvent, recording: RecordingSummary) => void;
+  archived?: boolean;
+  canGoBack: boolean;
+  onBack: () => void;
+  selectedIds: Set<string>;
+  setSelectedIds: Dispatch<SetStateAction<Set<string>>>;
+}) {
+  return <section className="library-view">
+    <header className="library-header">
+      <div>
+        {canGoBack ? <BackButton t={t} onBack={onBack} /> : null}
+        <h1>{archived ? t("archived") : t("recordings")}</h1>
+      </div>
+      {!archived && onOpenArchived ? <button className="library-secondary-button" onClick={onOpenArchived}><Archive size={16} />{t("archived")}</button> : null}
+    </header>
+    <RecordingSelectionList
+      recordings={recordings}
+      t={t}
+      appLanguage={appLanguage}
+      onOpenRecording={onOpenRecording}
+      onMoveRecordings={(ids) => onMoveRecordings(ids, null)}
+      onArchiveRecordings={onArchiveRecordings}
+      onRestoreRecordings={onRestoreRecordings}
+      onDeleteRecordings={onDeleteRecordings}
+      getRecordingActions={getRecordingActions}
+      onRecordingContextMenu={onRecordingContextMenu}
+      archived={archived}
+      selectedIds={selectedIds}
+      setSelectedIds={setSelectedIds}
+    />
+  </section>;
 }
 
 export function ProjectDetailView({
@@ -806,23 +857,10 @@ export function ProjectDetailView({
 }) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftName, setDraftName] = useState(project.name);
-  const [selectionAffordanceHovered, setSelectionAffordanceHovered] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const anchorIndexRef = useRef<number | null>(null);
-  const visibleIds = recordings.map((recording) => recording.id);
-  const selectedCount = selectedIds.size;
-  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
-  const someSelected = selectedCount > 0 && !allSelected;
-  const showHeaderSelector = selectedCount > 0 || selectionAffordanceHovered;
   useEffect(() => {
     setDraftName(project.name);
   }, [project.name]);
-  useEffect(() => {
-    setSelectedIds(new Set());
-  }, [project.id, setSelectedIds]);
-  useEffect(() => {
-    setSelectedIds((current) => reconcileSelectedIds(current, visibleIds));
-  }, [visibleIds.join(":")]);
 
   useEffect(() => {
     if (!isRenaming) return;
@@ -848,65 +886,8 @@ export function ProjectDetailView({
     setIsRenaming(false);
   }
 
-  useEffect(() => {
-    function isTypingTarget(target: EventTarget | null) {
-      if (!(target instanceof HTMLElement)) return false;
-      return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (isTypingTarget(event.target)) return;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
-        event.preventDefault();
-        setSelectedIds(new Set(visibleIds));
-      } else if (event.key === "Escape" && selectedIds.size > 0) {
-        setSelectedIds(new Set());
-      } else if ((event.key === "Delete" || event.key === "Backspace") && selectedIds.size > 0) {
-        event.preventDefault();
-        void Promise.resolve(onDeleteRecordings([...selectedIds])).then((deleted) => {
-          if (deleted) setSelectedIds(new Set());
-        });
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [visibleIds.join(":"), selectedIds, onDeleteRecordings]);
-
-  function toggleSelectAll() {
-    setSelectedIds(allSelected ? new Set() : new Set(visibleIds));
-  }
-
-  function selectRecording(event: MouseEvent, recording: RecordingSummary) {
-    const index = recordings.findIndex((item) => item.id === recording.id);
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (event.shiftKey && anchorIndexRef.current !== null) {
-        const start = Math.min(anchorIndexRef.current, index);
-        const end = Math.max(anchorIndexRef.current, index);
-        recordings.slice(start, end + 1).forEach((item) => next.add(item.id));
-      } else if (event.metaKey || event.ctrlKey || current.size > 0) {
-        if (next.has(recording.id)) next.delete(recording.id);
-        else next.add(recording.id);
-      } else {
-        next.add(recording.id);
-      }
-      return next;
-    });
-    anchorIndexRef.current = index;
-  }
-
-  async function finishBulk(action: Promise<void> | Promise<boolean> | void | boolean) {
-    const result = await action;
-    if (result !== false) setSelectedIds(new Set());
-  }
-
   return (
-    <section className="library-view" onClick={(event) => {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".recording-row, button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true']")) return;
-      setSelectedIds(new Set());
-    }}>
+    <section className="library-view">
       <header className="library-header">
         <div>
           <BackButton t={t} onBack={onBack} />
@@ -952,47 +933,20 @@ export function ProjectDetailView({
           </button>
         </div>
       </header>
-      {recordings.length > 0 ? (
-        <div className="recording-list selectable-list" onPointerLeave={() => setSelectionAffordanceHovered(false)}>
-          <div className="bulk-action-bar">
-            <button
-              className={`selection-circle select-all-control${!showHeaderSelector ? " is-hidden" : ""}${allSelected ? " is-selected" : ""}${someSelected ? " is-indeterminate" : ""}`}
-              aria-label={t("selectAll")}
-              aria-pressed={allSelected}
-              onClick={toggleSelectAll}
-            >
-              {allSelected ? <Check size={13} /> : someSelected ? <span /> : null}
-            </button>
-            <div className="bulk-action-items">
-              {selectedCount > 0 ? (
-                <>
-                <span>{selectedCount} {t("selected")}</span>
-                <button onClick={() => onMoveRecordings([...selectedIds], project.id)}><FolderInput size={15} />{t("moveToProject")}</button>
-                <button onClick={() => void finishBulk(onArchiveRecordings([...selectedIds]))}><Archive size={15} />{t("archive")}</button>
-                <button className="is-destructive" onClick={() => void finishBulk(onDeleteRecordings([...selectedIds]))}><Trash2 size={15} />{t("deletePermanently")}</button>
-                </>
-              ) : null}
-            </div>
-          </div>
-          {recordings.map((recording) => (
-            <RecordingRow
-              key={recording.id}
-              recording={recording}
-              t={t}
-              appLanguage={appLanguage}
-              onOpen={onOpenRecording}
-              actions={getRecordingActions(recording)}
-              selected={selectedIds.has(recording.id)}
-              selectionMode={selectedIds.size > 0}
-              onSelect={selectRecording}
-              onContextMenu={onRecordingContextMenu}
-              onSelectionAffordancePointerEnter={() => setSelectionAffordanceHovered(true)}
-            />
-          ))}
-        </div>
-      ) : (
-        <p className="library-empty-copy">{t("noRecordings")}</p>
-      )}
+      <RecordingSelectionList
+        recordings={recordings}
+        t={t}
+        appLanguage={appLanguage}
+        onOpenRecording={onOpenRecording}
+        onMoveRecordings={(ids) => onMoveRecordings(ids, project.id)}
+        onArchiveRecordings={onArchiveRecordings}
+        onDeleteRecordings={onDeleteRecordings}
+        getRecordingActions={getRecordingActions}
+        onRecordingContextMenu={onRecordingContextMenu}
+        emptyState="project"
+        selectedIds={selectedIds}
+        setSelectedIds={setSelectedIds}
+      />
     </section>
   );
 }

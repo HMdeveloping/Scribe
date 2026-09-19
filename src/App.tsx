@@ -52,7 +52,6 @@ import { localizedModel, SettingsView, type SettingsViewData, type UpdateProgres
 import { Onboarding } from "./components/Onboarding";
 import { WebviewContextMenuGuard } from "./components/WebviewContextMenuGuard";
 import { useWhisperModelDownloads } from "./hooks/useWhisperModelDownloads";
-import { useProjectRecordingSelection } from "./hooks/useProjectRecordingSelection";
 import { createTranslator, currentGreetingKey, type AppLanguage, type TranslationKey } from "./i18n";
 import type { Project, RecordingDetails, RecordingSummary } from "./types/library";
 
@@ -351,11 +350,7 @@ function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const titlebarToggleRef = useRef<HTMLButtonElement>(null);
   const activeSelectionClearRef = useRef<() => void>(() => {});
-  const {
-    selectedIds: projectSelectedRecordingIds,
-    setSelectedIds: setProjectSelectedRecordingIds,
-    clearSelection: clearProjectRecordingSelection,
-  } = useProjectRecordingSelection();
+  const [sharedRecordingSelectedIds, setSharedRecordingSelectedIds] = useState<Set<string>>(new Set());
   const [isNarrowSidebarRange, setIsNarrowSidebarRange] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(max-width: 980px)").matches;
@@ -1301,7 +1296,7 @@ function App() {
       <div className="app-body">
       <SidebarSelectionBoundary className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClearSelection={() => {
         activeSelectionClearRef.current();
-        clearProjectRecordingSelection();
+        setSharedRecordingSelectedIds(new Set());
       }}>
         <div className="sidebar-top">
           <div className="sidebar-header">
@@ -1398,8 +1393,8 @@ function App() {
       </SidebarSelectionBoundary>
 
       <MainContentSelectionBoundary className="main-content" onBackgroundClick={() => {
-        if (["home", "recordings", "archived-recordings", "project-detail"].includes(view)) activeSelectionClearRef.current();
-        if (view === "project-detail") clearProjectRecordingSelection();
+        if (view === "home") activeSelectionClearRef.current();
+        if (["recordings", "archived-recordings", "project-detail"].includes(view)) setSharedRecordingSelectedIds(new Set());
       }}>
         {finalizing ? <FinalizingView
           errorKind={transcriptionError?.kind}
@@ -1478,7 +1473,8 @@ function App() {
           onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
           canGoBack={canGoBack}
           onBack={goBack}
-          selectionClearRef={activeSelectionClearRef}
+          selectedIds={sharedRecordingSelectedIds}
+          setSelectedIds={setSharedRecordingSelectedIds}
         />
         : view === "archived-recordings" ? <RecordingsView
           recordings={archivedRecordings}
@@ -1494,7 +1490,8 @@ function App() {
           archived
           canGoBack={canGoBack}
           onBack={goBack}
-          selectionClearRef={activeSelectionClearRef}
+          selectedIds={sharedRecordingSelectedIds}
+          setSelectedIds={setSharedRecordingSelectedIds}
         />
         : view === "project-detail" && activeProject ? <ProjectDetailView
           project={activeProject}
@@ -1512,8 +1509,8 @@ function App() {
           getRecordingActions={recordingActions}
           onRecordingContextMenu={(event, item) => openContextMenu(event, recordingActions(item))}
           onBack={goBack}
-          selectedIds={projectSelectedRecordingIds}
-          setSelectedIds={setProjectSelectedRecordingIds}
+          selectedIds={sharedRecordingSelectedIds}
+          setSelectedIds={setSharedRecordingSelectedIds}
         />
         : view === "settings" ? <SettingsView
           appVersion={appVersion}

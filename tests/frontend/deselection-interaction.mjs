@@ -16,16 +16,49 @@ globalThis.Node = dom.window.Node;
 globalThis.MouseEvent = dom.window.MouseEvent;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const vite = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, ws: false }, appType: "custom", optimizeDeps: { noDiscovery: true, include: [] } });
+const tauriMocks = new Map([
+  ["@tauri-apps/api/core", "\0scribe-test:core"],
+  ["@tauri-apps/api/app", "\0scribe-test:app"],
+  ["@tauri-apps/api/event", "\0scribe-test:event"],
+  ["@tauri-apps/api/window", "\0scribe-test:window"],
+  ["@tauri-apps/plugin-dialog", "\0scribe-test:dialog"],
+  ["@tauri-apps/plugin-process", "\0scribe-test:process"],
+  ["@tauri-apps/plugin-updater", "\0scribe-test:updater"],
+]);
+const vite = await createServer({
+  configFile: false,
+  plugins: [{
+    name: "scribe-frontend-test-tauri-boundaries",
+    enforce: "pre",
+    resolveId(id) { return tauriMocks.get(id); },
+    load(id) {
+      if (id === "\0scribe-test:core") return "export async function invoke(command, args) { return globalThis.__SCRIBE_TEST_INVOKE(command, args); }";
+      if (id === "\0scribe-test:app") return "export async function getVersion() { return '0.1.22'; }";
+      if (id === "\0scribe-test:event") return "export async function listen() { return () => {}; }";
+      if (id === "\0scribe-test:window") return "export function getCurrentWindow() { return { isFullscreen: async () => false, onResized: async () => () => {}, startDragging: async () => {} }; }";
+      if (id === "\0scribe-test:dialog") return "export async function open() { return null; }";
+      if (id === "\0scribe-test:process") return "export async function relaunch() {}";
+      if (id === "\0scribe-test:updater") return "export async function check() { return null; }";
+      return null;
+    },
+  }],
+  server: { middlewareMode: true, hmr: false, ws: false },
+  ssr: { noExternal: ["@tauri-apps/api", "@tauri-apps/plugin-dialog", "@tauri-apps/plugin-process", "@tauri-apps/plugin-updater"] },
+  appType: "custom",
+  optimizeDeps: { noDiscovery: true, include: [] },
+});
 const { HomeRecentRecordings, RecordingsView, ProjectDetailView, SidebarSelectionBoundary, SidebarNavigationItem, MainContentSelectionBoundary } = await vite.ssrLoadModule("/src/components/LibraryViews.tsx");
 const { WebviewContextMenuGuard } = await vite.ssrLoadModule("/src/components/WebviewContextMenuGuard.tsx");
-const { useProjectRecordingSelection } = await vite.ssrLoadModule("/src/hooks/useProjectRecordingSelection.ts");
 const tauriConfig = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
 assert.equal(tauriConfig.app.windows[0].devtools, false, "Tauri main webview disables built-in development tools in debug and release configurations");
 const appSource = readFileSync("src/App.tsx", "utf8");
-assert.match(appSource, /useProjectRecordingSelection\(\)/);
-assert.match(appSource, /selectedIds=\{projectSelectedRecordingIds\}\s+setSelectedIds=\{setProjectSelectedRecordingIds\}/);
-assert.match(appSource, /clearProjectRecordingSelection\(\)/, "sidebar and Project background directly clear the rendered App-owned selection source");
+assert.match(appSource, /sharedRecordingSelectedIds/);
+assert.match(appSource, /setSharedRecordingSelectedIds\(new Set\(\)\)/, "sidebar and main background directly clear the shared recording list selection");
+assert.doesNotMatch(appSource, /useProjectRecordingSelection|projectSelectedRecordingIds|clearProjectRecordingSelection/);
+const librarySource = readFileSync("src/components/LibraryViews.tsx", "utf8");
+assert.match(librarySource, /export function RecordingSelectionList/);
+assert.match(librarySource.slice(librarySource.indexOf("export function RecordingsView"), librarySource.indexOf("export function ProjectDetailView")), /<RecordingSelectionList/);
+assert.match(librarySource.slice(librarySource.indexOf("export function ProjectDetailView"), librarySource.indexOf("export function MoveToProjectDialog")), /<RecordingSelectionList/);
 const legacyDf0Library = execFileSync("git", ["show", "df0c71a:src/components/LibraryViews.tsx"], { encoding: "utf8" });
 assert.match(legacyDf0Library, /event\.target === event\.currentTarget/, "baseline contains the broken nested-background condition exercised below");
 assert.match(legacyDf0Library, /selectionClearSignal/, "baseline uses the prior deferred signal architecture exercised by the sidebar test");
@@ -49,6 +82,19 @@ const recording = (id = "rec-1") => ({
   transcriptStatus: "none", archivedAt: null,
 });
 const project = { id: "project-1", name: "Project", createdAt: "2026-01-01", updatedAt: "2026-01-01", recordingCount: 2, totalDurationSeconds: 180 };
+const settingsData = {
+  settingsFileExisted: true,
+  settings: { version: 1, whisperModel: "large-v3-turbo", transcriptionLanguage: "sl", language: "en", appLanguage: "en", onboardingCompleted: true, lastSeenWhatsNewVersion: "0.1.22" },
+  models: [],
+};
+globalThis.__SCRIBE_TEST_INVOKE = async (command) => {
+  if (command === "load_scribe_settings" || command === "save_scribe_settings") return settingsData;
+  if (command === "initialize_library") return null;
+  if (command === "list_projects") return [project];
+  if (command === "list_recordings" || command === "list_project_recordings") return [recording(), recording("rec-2")];
+  if (command === "list_archived_recordings") return [];
+  return null;
+};
 const noOp = () => {};
 let openedRecordings = 0;
 const props = {
@@ -114,38 +160,41 @@ await testBackground("HomeRecentRecordings", (clearRef) => h(HomeRecentRecording
   ...props, onViewAll: noOp, clearSelectionRef: clearRef,
 }), ".recent-header h2");
 
-await testBackground("RecordingsView", (clearRef) => h(RecordingsView, {
-  ...props, onOpenArchived: noOp, selectionClearRef: clearRef,
-}), ".library-header > div");
-
 const projectView = (selectedIds, setSelectedIds) => h(ProjectDetailView, {
   project, ...props, onNewRecording: noOp, onImportAudio: noOp, onRenameProject: noOp,
   onDeleteProject: noOp, selectedIds, setSelectedIds,
 });
 
 function ControlledProjectView({ clearRef }) {
-  const selection = useProjectRecordingSelection();
-  clearRef.current = selection.clearSelection;
-  return projectView(selection.selectedIds, selection.setSelectedIds);
+  const [selectedIds, setSelectedIds] = React.useState(new Set());
+  clearRef.current = () => setSelectedIds(new Set());
+  return projectView(selectedIds, setSelectedIds);
 }
 
 await testBackground("ProjectDetailView", (clearRef) => h(ControlledProjectView, { clearRef }), ".library-header > div");
+
+function ControlledRecordingsView({ clearRef }) {
+  const [selectedIds, setSelectedIds] = React.useState(new Set());
+  clearRef.current = () => setSelectedIds(new Set());
+  return h(RecordingsView, { ...props, onOpenArchived: noOp, selectedIds, setSelectedIds });
+}
+await testBackground("RecordingsView", (clearRef) => h(ControlledRecordingsView, { clearRef }), ".library-header > div");
 
 for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
   const route = { current: "project-detail" };
   const ordering = [];
   function ProjectAppHierarchy() {
-    const selection = useProjectRecordingSelection();
+    const [selectedIds, setSelectedIds] = React.useState(new Set());
     const [currentRoute, setCurrentRoute] = React.useState("project-detail");
     return h(React.Fragment, null,
       h(WebviewContextMenuGuard),
-      h(SidebarSelectionBoundary, { className: "sidebar", onClearSelection: () => { ordering.push("clear"); selection.clearSelection(); } },
+      h(SidebarSelectionBoundary, { className: "sidebar", onClearSelection: () => { ordering.push("clear"); setSelectedIds(new Set()); } },
         h(SidebarNavigationItem, {
           className: destination === "Settings" ? "settings-button" : "nav-item",
           onClick: () => { ordering.push("navigate"); if (destination !== "Projects") { route.current = destination; setCurrentRoute(destination); } },
         }, destination)),
-      h(MainContentSelectionBoundary, { className: "main-content", onBackgroundClick: selection.clearSelection }, currentRoute === "project-detail"
-        ? projectView(selection.selectedIds, selection.setSelectedIds)
+      h(MainContentSelectionBoundary, { className: "main-content", onBackgroundClick: () => setSelectedIds(new Set()) }, currentRoute === "project-detail"
+        ? projectView(selectedIds, setSelectedIds)
         : h("output", { "data-testid": "route" }, currentRoute)),
     );
   }
@@ -170,6 +219,48 @@ for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
   assert.equal(route.current, destination === "Projects" ? "project-detail" : destination, `${destination}: sidebar action executes; same-page Projects remains open`);
   await view.unmount();
 }
+
+dom.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+const { default: App } = await vite.ssrLoadModule("/src/App.tsx");
+const appView = await mount(h(App));
+async function settleApp() {
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+}
+const actualNav = (name) => [...appView.host.querySelectorAll(".sidebar .nav-item, .sidebar .settings-button")]
+  .find((button) => button.textContent.trim() === name);
+async function clickActualNav(name) {
+  const button = actualNav(name);
+  assert.ok(button, `actual App sidebar contains ${name}`);
+  await appView.click(button);
+  await settleApp();
+}
+async function openActualProject() {
+  if (!appView.host.querySelector(".project-row")) await clickActualNav("Projects");
+  const projectButton = appView.host.querySelector(".project-row");
+  assert.ok(projectButton, "actual App Projects view renders the project fixture");
+  await appView.click(projectButton);
+  await settleApp();
+  assert.ok(appView.host.querySelector(".project-title-button"), "actual App opened ProjectDetail");
+}
+async function selectActualProjectRecording() {
+  const checkbox = appView.host.querySelector(".recording-row-shell .selection-circle");
+  assert.ok(checkbox, "actual ProjectDetail shared list exposes its recording checkbox");
+  await appView.click(checkbox);
+  assert.equal(appView.host.querySelector(".recording-row-shell.is-selected") !== null, true, "actual App shared selection state renders selected Project row");
+}
+await settleApp();
+await clickActualNav("Projects");
+await openActualProject();
+await selectActualProjectRecording();
+await appView.click(appView.host.querySelector("aside.sidebar"));
+assert.equal(appView.host.querySelector(".recording-row-shell.is-selected"), null, "actual sidebar background clears the shared App selection");
+for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
+  await openActualProject();
+  await selectActualProjectRecording();
+  await clickActualNav(destination);
+  assert.equal(appView.host.querySelector(".recording-row-shell.is-selected"), null, `actual App sidebar ${destination} clears the shared selection`);
+}
+await appView.unmount();
 
 const contextMenuTest = await mount(h(WebviewContextMenuGuard));
 for (const target of [document.createElement("div"), document.createElement("button"), document.createElement("aside")]) {
