@@ -92,8 +92,54 @@ jobs:
           Copy-Item "src-tauri\icons\Square150x150Logo.png" "$assets\Square150x150Logo.png"
           Copy-Item "src-tauri\icons\Square44x44Logo.png" "$assets\Square44x44Logo.png"
           Copy-Item "scripts\windows-store\AppxManifest.xml" "$payload\AppxManifest.xml"
-          $makeAppx = (Get-ChildItem "$env:ProgramFiles(x86)\Windows Kits\10\bin" -Recurse -Filter MakeAppx.exe | Sort-Object FullName -Descending | Select-Object -First 1).FullName
-          if (-not $makeAppx) { throw "MakeAppx.exe not found" }
+          $makeAppx = $null
+          $pathCommand = Get-Command MakeAppx.exe -ErrorAction SilentlyContinue
+          if ($pathCommand) {
+            $makeAppx = $pathCommand.Source
+            Write-Host "MakeAppx.exe found on PATH: $makeAppx"
+          }
+          if (-not $makeAppx) {
+            $sdkRoots = @()
+            foreach ($candidateRoot in @(
+              $env:WindowsSdkDir,
+              $env:WindowsSdkVerBinPath,
+              "$env:ProgramFiles\Windows Kits\10",
+              "${env:ProgramFiles(x86)}\Windows Kits\10"
+            )) {
+              if ($candidateRoot -and (Test-Path -LiteralPath $candidateRoot)) {
+                $sdkRoots += $candidateRoot
+              }
+            }
+            $installedRootsKey = "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots"
+            if (Test-Path -LiteralPath $installedRootsKey) {
+              $installedRoots = Get-ItemProperty -LiteralPath $installedRootsKey
+              foreach ($property in $installedRoots.PSObject.Properties) {
+                if ($property.Name -like "KitsRoot*" -and $property.Value -and (Test-Path -LiteralPath $property.Value)) {
+                  $sdkRoots += $property.Value
+                }
+              }
+            }
+            $sdkRoots = $sdkRoots | Sort-Object -Unique
+            $makeAppxCandidates = @()
+            foreach ($sdkRoot in $sdkRoots) {
+              $binRoot = Join-Path $sdkRoot "bin"
+              if (Test-Path -LiteralPath $binRoot) {
+                $makeAppxCandidates += Get-ChildItem -LiteralPath $binRoot -Recurse -Filter MakeAppx.exe -File -ErrorAction SilentlyContinue
+              }
+            }
+            $makeAppxCandidate = $makeAppxCandidates |
+              Sort-Object @{ Expression = { if ($_.FullName -match "\\x64\\") { 0 } else { 1 } } }, FullName -Descending |
+              Select-Object -First 1
+            if ($makeAppxCandidate) {
+              $makeAppx = $makeAppxCandidate.FullName
+              Write-Host "MakeAppx.exe selected from Windows SDK: $makeAppx"
+            }
+          }
+          if (-not $makeAppx) {
+            Write-Host "Runner architecture: $env:PROCESSOR_ARCHITECTURE"
+            throw "Official Windows SDK MakeAppx.exe was not found on this runner."
+          }
+          Write-Host "Selected MakeAppx.exe: $makeAppx"
           $artifact = "$env:GITHUB_WORKSPACE\Scribe-v0.1.23-Windows-x64.msix"
           & $makeAppx pack /d $payload /p $artifact /o
           if ($LASTEXITCODE -ne 0) { throw "MakeAppx failed" }
