@@ -35,6 +35,9 @@ pub(crate) struct ProductionC0DiagnosticEvent {
     pub(crate) canonical_frames: Option<u64>,
     pub(crate) terminal_outcome: Option<String>,
     pub(crate) cleanup_completed: Option<bool>,
+    pub(crate) error_category: Option<String>,
+    pub(crate) error_message: Option<String>,
+    pub(crate) conflict: Option<crate::transcription_chunking::MergeConflict>,
 }
 
 pub(crate) struct ProductionC0DiagnosticSink {
@@ -84,6 +87,9 @@ impl ProductionC0DiagnosticSink {
             canonical_frames: None,
             terminal_outcome: None,
             cleanup_completed: None,
+            error_category: None,
+            error_message: None,
+            conflict: None,
         }
     }
 }
@@ -223,6 +229,9 @@ mod tests {
             canonical_frames: None,
             terminal_outcome: None,
             cleanup_completed: None,
+            error_category: None,
+            error_message: None,
+            conflict: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("parsedWordCount"));
