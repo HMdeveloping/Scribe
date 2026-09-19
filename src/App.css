@@ -2795,9 +2795,9 @@ button {
 @media (max-height: 680px) {
   .modal-backdrop,
   .model-picker-backdrop {
-    align-items: flex-start;
-    padding-top: 16px;
-    padding-bottom: 16px;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
     overflow-y: auto;
   }
 
