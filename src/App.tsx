@@ -1284,6 +1284,10 @@ function App() {
     navigate({ view: "settings" }, "top");
   }
 
+  function clearSharedRecordingSelection() {
+    setSharedRecordingSelectedIds(new Set());
+  }
+
   return (
     <div className={`app${isMac ? " is-macos" : ""}${isFullscreen ? " is-fullscreen" : ""}${sidebarCollapsed ? " sidebar-is-collapsed" : ""}`}>
       <WebviewContextMenuGuard />
@@ -1334,7 +1338,7 @@ function App() {
             <SidebarNavigationItem
               className={`nav-item${view === "home" ? " active" : ""}`}
               aria-current={view === "home" ? "page" : undefined}
-              onClick={() => navigate({ view: "home" }, "top")}
+              onClick={() => { clearSharedRecordingSelection(); navigate({ view: "home" }, "top"); }}
               title={sidebarCollapsed ? t("home") : undefined}
             >
               <Home size={18} strokeWidth={1.8} />
@@ -1344,7 +1348,7 @@ function App() {
             <SidebarNavigationItem
               className={`nav-item${view === "projects" || view === "project-detail" ? " active" : ""}`}
               aria-current={view === "projects" || view === "project-detail" ? "page" : undefined}
-              onClick={() => navigate({ view: "projects" }, "top")}
+              onClick={() => { clearSharedRecordingSelection(); navigate({ view: "projects" }, "top"); }}
               title={sidebarCollapsed ? t("projects") : undefined}
             >
               <FolderClosed size={18} strokeWidth={1.8} />
@@ -1354,7 +1358,7 @@ function App() {
             <SidebarNavigationItem
               className={`nav-item${view === "recordings" || view === "archived-recordings" ? " active" : ""}`}
               aria-current={view === "recordings" || view === "archived-recordings" ? "page" : undefined}
-              onClick={() => navigate({ view: "recordings" }, "top")}
+              onClick={() => { clearSharedRecordingSelection(); navigate({ view: "recordings" }, "top"); }}
               title={sidebarCollapsed ? t("recordings") : undefined}
             >
               <AudioLines size={18} strokeWidth={1.8} />
@@ -1382,6 +1386,7 @@ function App() {
         <SidebarNavigationItem
           className={`settings-button${view === "settings" ? " active" : ""}`}
           onClick={() => {
+            clearSharedRecordingSelection();
             setSettingsInitialSection("General");
             navigate({ view: "settings" }, "top");
           }}

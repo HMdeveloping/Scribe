@@ -1061,6 +1061,10 @@ button {
   gap: 6px;
 }
 
+.project-recording-selection-surface {
+  min-height: 100%;
+}
+
 .recording-row-shell,
 .project-row-shell {
   position: relative;

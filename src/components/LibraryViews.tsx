@@ -693,7 +693,7 @@ export function RecordingSelectionList({
   }
 
   return (
-    <div className="recording-selection-surface" onClick={(event) => {
+    <div className={`recording-selection-surface${emptyState === "project" ? " project-recording-selection-surface" : ""}`} onClick={(event) => {
       const target = event.target;
       if (target instanceof Element && target.closest(".recording-row, button, a, input, textarea, select, [role='button'], [role='menuitem'], [contenteditable='true']")) return;
       setSelectedIds(new Set());
