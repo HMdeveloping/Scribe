@@ -114,6 +114,7 @@ async function mount(element) {
   return {
     host,
     async click(target) { await act(async () => target.dispatchEvent(new MouseEvent("click", { bubbles: true }))); },
+    async pointerDown(target) { await act(async () => target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }))); },
     async unmount() { await act(async () => root.unmount()); host.remove(); },
   };
 }
@@ -172,6 +173,12 @@ function ControlledProjectView({ clearRef }) {
 }
 
 await testBackground("ProjectDetailView", (clearRef) => h(ControlledProjectView, { clearRef }), ".library-header > div");
+const projectParentView = await mount(h(ControlledProjectView, { clearRef: createRef() }));
+await projectParentView.click(projectParentView.host.querySelector(".recording-row-shell .selection-circle"));
+assert.ok(projectParentView.host.querySelector(".recording-row-shell.is-selected"), "ProjectDetail parent test begins with a real selected recording");
+await projectParentView.click(projectParentView.host.querySelector(".library-view"));
+assert.equal(projectParentView.host.querySelector(".recording-row-shell.is-selected"), null, "ProjectDetail page parent directly clears without relying on the App main boundary");
+await projectParentView.unmount();
 
 function ControlledRecordingsView({ clearRef }) {
   const [selectedIds, setSelectedIds] = React.useState(new Set());
@@ -188,7 +195,11 @@ for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
     const [currentRoute, setCurrentRoute] = React.useState("project-detail");
     return h(React.Fragment, null,
       h(WebviewContextMenuGuard),
-      h(SidebarSelectionBoundary, { className: "sidebar", onClearSelection: () => { ordering.push("clear"); setSelectedIds(new Set()); } },
+      h(SidebarSelectionBoundary, {
+        className: "sidebar",
+        onClearSelection: () => { ordering.push("clear"); setSelectedIds(new Set()); },
+        onPointerDownCapture: () => setSelectedIds(new Set()),
+      },
         h(SidebarNavigationItem, {
           className: destination === "Settings" ? "settings-button" : "nav-item",
           onClick: () => { ordering.push("navigate"); if (destination !== "Projects") { route.current = destination; setCurrentRoute(destination); } },
@@ -207,12 +218,13 @@ for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
     assert.equal(view.host.querySelectorAll(".recording-row-shell.is-selected").length, 2, "sidebar multi-selection setup uses actual ProjectDetail state");
   }
   assert.equal(view.host.querySelector(".recording-row-shell.is-selected") !== null, true, `${destination}: App-owned ProjectDetail selection is active before sidebar click`);
-  await view.click(view.host.querySelector("aside.sidebar"));
+  await view.pointerDown(view.host.querySelector("aside.sidebar"));
   assert.equal(view.host.querySelector(".recording-row-shell.is-selected"), null, `${destination}: sidebar-root background capture directly clears Project selection`);
   ordering.length = 0;
   await view.click(view.host.querySelector(".recording-row-shell .selection-circle"));
   const sidebarItem = view.host.querySelector(destination === "Settings" ? ".settings-button" : ".nav-item");
   assert.ok(sidebarItem, `${destination}: actual production sidebar navigation item is mounted`);
+  await view.pointerDown(sidebarItem);
   await view.click(sidebarItem);
   assert.equal(view.host.querySelector(".recording-row-shell.is-selected"), null, `${destination}: sidebar directly clears App-owned ProjectDetail selection`);
   assert.deepEqual(ordering, ["clear", "navigate"], `${destination}: actual sidebar click clears before its action`);
@@ -252,14 +264,23 @@ await settleApp();
 await clickActualNav("Projects");
 await openActualProject();
 await selectActualProjectRecording();
-await appView.click(appView.host.querySelector("aside.sidebar"));
-assert.equal(appView.host.querySelector(".recording-row-shell.is-selected"), null, "actual sidebar background clears the shared App selection");
+await appView.click(appView.host.querySelector(".library-view"));
+assert.equal(appView.host.querySelector(".recording-row-shell.is-selected"), null, "actual ProjectDetail page-parent whitespace clears shared selection");
 for (const destination of ["Home", "Recordings", "Projects", "Settings"]) {
   await openActualProject();
   await selectActualProjectRecording();
-  await clickActualNav(destination);
+  const destinationItem = actualNav(destination);
+  assert.ok(destinationItem, `actual App sidebar contains ${destination}`);
+  await appView.pointerDown(destinationItem);
+  assert.equal(appView.host.querySelector(".recording-row-shell.is-selected"), null, `actual sidebar pointer-down capture clears before ${destination} navigation`);
+  await appView.click(destinationItem);
+  await settleApp();
   assert.equal(appView.host.querySelector(".recording-row-shell.is-selected"), null, `actual App sidebar ${destination} clears the shared selection`);
 }
+await openActualProject();
+await selectActualProjectRecording();
+await appView.pointerDown(appView.host.querySelector("aside.sidebar"));
+assert.equal(appView.host.querySelector(".recording-row-shell.is-selected"), null, "actual sidebar-root pointer-down clears on empty container interaction");
 await appView.unmount();
 
 const contextMenuTest = await mount(h(WebviewContextMenuGuard));

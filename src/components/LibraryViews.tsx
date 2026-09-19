@@ -40,13 +40,15 @@ export function localizedRecordingTitle(title: string, t: TFunction) {
 export function SidebarSelectionBoundary({
   className,
   onClearSelection,
+  onPointerDownCapture,
   children,
 }: {
   className?: string;
   onClearSelection: () => void;
+  onPointerDownCapture?: () => void;
   children: ReactNode;
 }) {
-  return <aside className={className} onClickCapture={onClearSelection}>{children}</aside>;
+  return <aside className={className} onPointerDownCapture={onPointerDownCapture} onClickCapture={onClearSelection}>{children}</aside>;
 }
 
 export function SidebarNavigationItem({
@@ -887,7 +889,9 @@ export function ProjectDetailView({
   }
 
   return (
-    <section className="library-view">
+    <section className="library-view" onClick={(event) => {
+      if (!isSelectionOwnedClick(event.target)) setSelectedIds(new Set());
+    }}>
       <header className="library-header">
         <div>
           <BackButton t={t} onBack={onBack} />

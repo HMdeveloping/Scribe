@@ -1297,7 +1297,7 @@ function App() {
       <SidebarSelectionBoundary className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClearSelection={() => {
         activeSelectionClearRef.current();
         setSharedRecordingSelectedIds(new Set());
-      }}>
+      }} onPointerDownCapture={() => setSharedRecordingSelectedIds(new Set())}>
         <div className="sidebar-top">
           <div className="sidebar-header">
             <button className="brand brand-button" onClick={() => navigate({ view: "home" }, "top")} aria-label={t("home")} title={sidebarCollapsed ? t("home") : undefined}>
