@@ -11,6 +11,8 @@ const ATTACK = 0.26;
 const RELEASE = 0.13;
 const NEIGHBOR_BLEND = 0.18;
 
+type MicrophonePermissionState = PermissionState | "unsupported";
+
 export function useMicrophoneLevel(paused: boolean) {
   const [levels, setLevels] = useState<number[]>(() => Array(BAR_COUNT).fill(0));
   const [status, setStatus] = useState<"requesting" | "active" | "error">("requesting");
@@ -169,17 +171,33 @@ export function useMicrophoneLevel(paused: boolean) {
       } catch (reason) {
         if (import.meta.env.DEV) console.error("Scribe: microphone initialization failed", reason);
         const name = reason instanceof DOMException ? reason.name : "";
+        let permissionState: MicrophonePermissionState = "unsupported";
+        try {
+          if (navigator.permissions?.query) {
+            permissionState = (await navigator.permissions.query({ name: "microphone" as PermissionName })).state;
+          }
+        } catch {
+          // WebKit may not expose microphone permission state; retain the real error name.
+        }
         // getUserMedia's NotAllowedError is the only browser-level result that
-        // supports a permission-denied message. The other DOMException names
-        // describe acquisition/device failures and must not blame TCC.
+        // supports a permission-denied message, and only when the permission
+        // state confirms denial. A granted permission plus NotAllowedError can
+        // still mean the device/capture path failed on the current WebView.
+        const permissionDenied = permissionState === "denied";
         const errorKey: TranslationKey = name === "NotAllowedError" || name === "SecurityError"
-          ? "microphonePermissionDetail"
+          ? permissionDenied ? "microphonePermissionDetail" : "microphoneError"
           : name === "NotFoundError" || name === "OverconstrainedError"
             ? "microphoneUnavailableDetail"
             : name === "NotReadableError" || name === "AbortError"
               ? "microphoneBusyDetail"
               : "microphoneError";
-        console.warn("[recording-lifecycle] get_user_media_failed", { name, errorKey });
+        console.warn("[recording-lifecycle] get_user_media_failed", {
+          name,
+          message: reason instanceof Error ? reason.message : String(reason),
+          permissionState,
+          errorKey,
+          secureContext: window.isSecureContext,
+        });
         fail(errorKey);
       }
     }
