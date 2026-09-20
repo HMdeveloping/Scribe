@@ -501,17 +501,15 @@ jobs:
         run: |
           set -euo pipefail
           cat > release-notes.md <<'EOF'
-          Scribe v0.1.23 RC.1
+          Scribe v0.1.24
 
-          Pre-V1 release candidate for additional real-world testing.
+          Pre-V1 release focused on validating the macOS microphone runtime fix.
 
           Highlights:
-          - improved Windows stability
-          - local transcription reliability improvements
-          - Windows GPU acceleration with CPU fallback
-          - improved transcription progress and cancellation
-          - responsive desktop UI improvements
-          - recording, import, playback, and general pre-V1 polish
+          - improved macOS microphone startup and error handling
+          - more accurate permission and capture error classification
+          - targeted diagnostics for microphone initialization failures
+          - no user-data migration or destructive changes
 
           Microsoft Store availability is separate and is not included in this release.
           EOF
