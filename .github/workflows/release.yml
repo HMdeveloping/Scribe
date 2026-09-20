@@ -293,8 +293,21 @@ jobs:
         run: |
           set -euo pipefail
           app_path="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scribe.app"
-          codesign --force --deep --options runtime --sign - "$app_path"
+          codesign --force --deep --options runtime --entitlements src-tauri/Entitlements.plist --sign - "$app_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
+
+      - name: Verify macOS microphone entitlement
+        if: matrix.target == 'aarch64-apple-darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scribe.app"
+          entitlements_path="$(mktemp)"
+          codesign -d --entitlements :- "$app_path/Contents/MacOS/scribe-app" > "$entitlements_path" 2>/dev/null
+          /usr/libexec/PlistBuddy -c "Print :com.apple.security.device.audio-input" "$entitlements_path" | grep -qx "true"
+          echo "Verified com.apple.security.device.audio-input=true in the production executable"
+          codesign -dvv "$app_path/Contents/MacOS/scribe-app" 2>&1 | sed -n '1,12p'
+          rm -f "$entitlements_path"
 
       - name: Create updater archive from final signed macOS app
         if: matrix.target == 'aarch64-apple-darwin'
@@ -501,7 +514,7 @@ jobs:
         run: |
           set -euo pipefail
           cat > release-notes.md <<'EOF'
-          Scribe v0.1.24
+          Scribe v0.1.25
 
           Pre-V1 release focused on validating the macOS microphone runtime fix.
 
