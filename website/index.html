@@ -1,70 +1,396 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Scribe</title>
-    <meta name="description" content="Scribe records, imports, and transcribes audio locally on macOS and Windows." />
-    <link rel="icon" href="./scribe-icon.png" />
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <main class="page">
-      <section class="hero" aria-labelledby="title">
-        <img class="logo" src="./scribe-icon.png" alt="" />
-        <p class="brand">Scribe</p>
-        <h1 id="title">Record. Import. Transcribe.</h1>
-        <p class="subtitle">Privately on your computer.</p>
-        <p class="copy">
-          Scribe is a local-first desktop app for recording audio, importing files, and creating synchronized transcripts with local Whisper models.
-          Your recordings and transcripts stay on your device.
-        </p>
-
-        <div class="downloads" aria-label="Downloads">
-          <div class="download-card macos-download">
-            <a id="download-macos" class="download-button primary" href="#" data-asset="Scribe.dmg">
-              <span class="platform-icon" aria-hidden="true">macOS</span>
-              Download for macOS
-            </a>
-            <p class="macos-note">macOS may ask you to confirm Scribe the first time you open it.</p>
-            <details class="macos-help">
-              <summary>First time opening Scribe?</summary>
-              <ol>
-                <li>Download Scribe and move it to Applications.</li>
-                <li>Try to open Scribe once.</li>
-                <li>If macOS shows “Scribe Not Opened”, click Done.</li>
-                <li>Open System Settings → Privacy &amp; Security.</li>
-                <li>Scroll down and click “Open Anyway” next to Scribe.</li>
-                <li>Confirm by clicking “Open”.</li>
-                <li>After this, Scribe can be opened normally.</li>
-              </ol>
-              <p>Scribe is currently distributed independently and is not Apple-notarized. macOS therefore asks for an extra confirmation the first time you open it.</p>
-              <p>Future Scribe updates are cryptographically signed and verified by the app before installation.</p>
-            </details>
-          </div>
-          <div class="download-card windows-download">
-            <a id="download-windows" class="download-button secondary" href="#" data-asset="Scribe.exe">
-              <span class="platform-icon" aria-hidden="true">Win</span>
-              Download for Windows
-            </a>
-          </div>
-        </div>
-
-        <p class="tester-note">
-          Scribe v0.1 is an early test release. Your operating system may ask you to confirm the app the first time you open it.
-        </p>
-
-        <footer class="site-footer">
-          <p>Questions, feedback, or issues? Get in touch.</p>
-          <nav aria-label="Footer links">
-            <a href="mailto:spornmaks4@gmail.com">Contact</a>
-            <a href="./privacy/">Privacy Policy</a>
-            <a href="https://github.com/sportiyeet/Scribe" target="_blank" rel="noreferrer">GitHub</a>
-            <a id="all-releases" href="https://github.com/sportiyeet/Scribe/releases" target="_blank" rel="noreferrer">Releases</a>
-          </nav>
-        </footer>
-      </section>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Scribe turns lectures and spoken audio into searchable, timestamped transcripts — locally on your computer." />
+  <title>Scribe — Your recordings. Your computer. Your transcripts.</title>
+  <link rel="icon" href="assets/scribe-logo.png" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+    :root{--ink:#101a3a;--muted:#5f6c83;--paper:#fbfcff;--acid:#20c8eb;--line:#e4eaf5;--blue:#e9f7ff;--violet:#8657ff;--gradient:linear-gradient(110deg,#20c8eb 0%,#287cf2 50%,#7252f2 82%,#a77ee3 100%)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font-family:Manrope,system-ui,sans-serif}a{color:inherit;text-decoration:none}.wrap{max-width:1160px;margin:auto;padding:0 28px}
+    nav{height:82px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}.brand,.navlinks{transform:none}.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:25px;letter-spacing:-.04em}.mark{width:35px;height:35px;border-radius:9px;display:grid;place-items:center;overflow:hidden;box-shadow:0 4px 12px #5578d51c}.mark img{width:100%;height:100%;object-fit:cover}.navlinks{display:flex;align-items:center;gap:28px;font-size:13px;color:#64718a}.navlinks>a:not(.navbutton){transition:color .22s ease-out}.navlinks>a:not(.navbutton):hover{background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent}.navbutton{background:var(--ink);color:#fff;padding:11px 17px;border-radius:7px;font-size:13px;font-weight:700;transition:background-color .2s ease-out,box-shadow .2s ease-out,transform .2s ease-out}.navbutton:hover,.navbutton:focus,.navbutton:focus-visible{background:var(--ink);color:#fff !important;box-shadow:0 7px 16px #2a3c7020,0 2px 7px #3b8fe110;transform:translateY(-2px) scale(1.01)}.primary:hover,.primary:focus,.primary:focus-visible{background:var(--ink);color:#fff !important;box-shadow:0 14px 28px #2a3c7033,0 4px 10px #3b8fe124;transform:translateY(-4px) scale(1.025)}.navbutton:active{background:var(--ink);color:#fff !important;transform:translateY(0) scale(.99);box-shadow:0 3px 8px #2a3c7014}.primary:active{background:var(--ink);color:#fff !important;transform:translateY(0) scale(.98);box-shadow:0 5px 12px #2a3c701c}.navbutton:focus-visible,.primary:focus-visible{outline:2px solid #62d7ef;outline-offset:3px}
+    .hero{padding:80px 0 76px;display:grid;grid-template-columns:1.02fr .98fr;gap:60px;align-items:center}.eyebrow,.mono{font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.09em;font-size:11px}.eyebrow{color:#168fc5;font-weight:500;margin-bottom:22px}.hero h1{font-size:clamp(45px,6.4vw,76px);line-height:.98;letter-spacing:-.075em;margin:0 0 25px;max-width:650px}.hero h1 span{background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent}.hero p{font-size:18px;line-height:1.65;color:var(--muted);max-width:510px;margin:0 0 29px}.actions{display:flex;gap:12px;align-items:center}.primary{background:var(--ink);color:#fff;padding:15px 20px;border-radius:7px;font-weight:700;font-size:14px;transition:background-color .22s ease-out,box-shadow .22s ease-out,transform .22s ease-out}.primary .arrow{display:inline-block;transition:transform .22s ease-out}.primary:hover .arrow{transform:translate(3px,-3px)}.secondary{padding:15px 20px;border:1px solid #cbd6e8;border-radius:7px;font-weight:700;font-size:14px}.note{font-size:12px;color:#7a879e;margin-top:14px}
+    .app{background:var(--ink);border-radius:14px;padding:14px;box-shadow:0 20px 50px #4f6fbd1f,0 0 70px #8bc9ff20}.app-video{padding:0;background:transparent;overflow:hidden;aspect-ratio:1792/1280}
+    .app-video-media{display:block;width:100%;height:100%;object-fit:contain;border-radius:14px}
+    .appbar{display:flex;align-items:center;justify-content:space-between;color:#d9e3e4;font-size:11px;padding:3px 7px 13px}.dots{display:flex;gap:5px}.dots i{width:7px;height:7px;border-radius:50%;background:#708188}.dots i:first-child{background:#25c7ec}.window{background:#fbfcff;border-radius:9px;min-height:345px;display:grid;grid-template-columns:130px 1fr}.side{padding:18px 12px;border-right:1px solid #e0e7f2;font-size:11px;color:#64718a}.side strong{color:var(--ink);display:block;font-size:14px;margin-bottom:22px}.side div{padding:9px 8px;margin:3px 0}.side .active{background:#e5f6ff;color:#1c6fca;border-radius:5px;font-weight:700}.main{padding:22px 24px}.main h3{font-size:15px;margin:0 0 4px}.crumb{font-size:10px;color:#8794ab;margin-bottom:27px}.audio{background:#e7f7ff;border-radius:8px;padding:14px 15px;margin-bottom:20px}.audiohead{display:flex;justify-content:space-between;font-size:10px;color:#46678a}.wave{height:38px;margin:12px 0 6px;border-radius:4px;background:repeating-linear-gradient(90deg,#2cc8eb 0 3px,#448ef4 3px 5px,transparent 5px 9px);opacity:.82}.transcript{font-size:11px;line-height:1.7;color:#506078}.transcript .time{font-family:'DM Mono';color:#3e73dd;margin-right:10px}.highlight{background:linear-gradient(100deg,#d9f8ff,#e7e4ff);padding:1px 3px;border-radius:2px;color:var(--ink)}
+    .rule{border-top:1px solid var(--line)}.strip{display:grid;grid-template-columns:repeat(3,1fr);padding:29px 0 46px;gap:30px}.strip>div{padding:14px 16px;border-radius:14px;transition:background-color .22s ease-out,transform .22s ease-out}.strip>div:hover{background:#f5f6f8;transform:translateY(-2px)}.strip strong{display:block;font-size:16px;font-weight:700;letter-spacing:-.015em;margin-top:12px;color:var(--ink);transition:color .22s ease-out}.strip>div:hover strong{color:#0c1534}.strip p{color:var(--muted);font-size:13px;line-height:1.55;margin:8px 0 0}.stepnum{font-family:'DM Mono';font-size:11px;color:#71809a}.stepnum .num{font-weight:500;transition:filter .22s ease-out}.strip>div:nth-child(1) .num{color:#20bfe3}.strip>div:nth-child(2) .num{color:#287cf2}.strip>div:nth-child(3) .num{color:#7252f2}.strip>div:hover .num{filter:saturate(1.25)}
+    section.block{padding:91px 0}.split{display:grid;grid-template-columns:.95fr 1.05fr;gap:90px}.kicker{color:#3986d8;margin-bottom:19px}.block h2{font-size:clamp(32px,4vw,50px);letter-spacing:-.065em;line-height:1.02;margin:0;max-width:440px}.blockintro{color:var(--muted);font-size:16px;line-height:1.7;max-width:520px;margin:0 0 34px}.features{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));align-items:stretch;gap:30px 45px}.feature{border-top:1px solid var(--line);padding:17px 0 0;margin:0;min-width:0}.feature-heading{display:flex;align-items:center;gap:9px;height:20px;margin:0;color:var(--ink);transition:filter .22s ease-out}.feature-icon-wrap{width:20px;height:20px;flex:0 0 20px;display:grid;place-items:center}.feature-icon{width:20px;height:20px;display:block;object-fit:contain;color:currentColor;transition:filter .22s ease-out}.feature:nth-child(1) .feature-icon{color:#20bfe3}.feature:nth-child(2) .feature-icon{color:#4b91f3}.feature:nth-child(3) .feature-icon{color:#4a61d8}.feature:nth-child(4) .feature-icon{color:#7252f2}.feature-icon .accent{stroke:currentColor}.feature h3{font-size:16px;line-height:20px;margin:0;color:var(--ink);transition:color .22s ease-out}.feature:hover .feature-icon{filter:saturate(1.18) brightness(1.04)}.feature:nth-child(1):hover h3{color:#20bfe3}.feature:nth-child(2):hover h3{color:#4b91f3}.feature:nth-child(3):hover h3{color:#4a61d8}.feature:nth-child(4):hover h3{color:#7252f2}.feature p{font-size:13px;line-height:1.6;color:var(--muted);margin:8px 0 0}.privacy{background:var(--ink);color:white;border-radius:14px;padding:55px 58px;display:grid;grid-template-columns:1.1fr .9fr;gap:60px;align-items:center}.privacy h2{color:white}.privacy p{color:#b8c7d9}.privacy .pill{display:inline-block;background:var(--gradient);color:white;padding:7px 10px;border-radius:4px;font-family:'DM Mono';font-size:10px;text-transform:uppercase;margin-bottom:16px}.checks{display:grid;gap:14px}.checks.observe-ready div{opacity:0;transform:translateX(60px);transition:opacity .46s ease-out,transform .46s cubic-bezier(.22,.8,.24,1)}.checks.observe-ready div:nth-child(2){transition-delay:.1s}.checks.observe-ready div:nth-child(3){transition-delay:.2s}.checks.observe-ready.is-visible div{opacity:1;transform:translateX(0)}.checks div{border-bottom:1px solid #344267;padding:0 0 14px;font-size:14px;color:#dce7f8}.checks span{color:#54d7ef;margin-right:10px}.cta{text-align:center;padding:100px 0 115px}.cta h2{font-size:clamp(38px,5vw,62px);letter-spacing:-.07em;margin:0 auto 20px;max-width:680px}.cta p{color:var(--muted);margin:0 auto 28px;line-height:1.6}.footer{border-top:1px solid var(--line);padding:25px 0;display:flex;justify-content:space-between;color:#7b889f;font-size:12px}.footer a{color:var(--ink);font-weight:700}
+    #how{padding-bottom:45px}#local{padding-top:45px}
+    @media(max-width:800px){.navlinks a:not(.navbutton){display:none}.hero,.split,.privacy{grid-template-columns:1fr;gap:42px}.hero{padding-top:65px}.window{min-height:300px}.strip{grid-template-columns:1fr;gap:24px}.split{gap:35px}.features{gap:24px}.privacy{padding:35px 27px}.footer{gap:15px;flex-direction:column}.main{padding:18px}.side{display:none}.window{display:block}#how{padding-bottom:32px}#local{padding-top:32px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.navbutton,.primary,.primary .arrow{transition:none}.navbutton:hover,.primary:hover{transform:none}.primary:hover .arrow{transform:none}}
+  </style>
+  <style>
+    .checks.observe-ready div{transform:translateX(40px);transition-duration:.44s}
+    .checks.observe-ready div:nth-child(2){transition-delay:.12s}
+    .checks.observe-ready div:nth-child(3){transition-delay:.24s}
+    #local{padding-bottom:35px}
+    @media(max-width:800px){#local{padding-bottom:28px}}
+  </style>
+  <style>
+    .language-picker{position:relative}.language-toggle{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:#64718a;font:inherit;font-size:13px;padding:8px 2px;cursor:pointer;transition:color .2s ease-out}.language-toggle:hover,.language-toggle:focus-visible{color:var(--ink)}.language-toggle:focus-visible{outline:2px solid #62d7ef;outline-offset:3px;border-radius:4px}.language-toggle svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.language-chevron{font-size:15px;line-height:10px;margin-left:1px;transform:translateY(-1px)}.language-menu{position:absolute;right:0;top:calc(100% + 9px);min-width:138px;padding:5px;background:#fff;border:1px solid #e4eaf5;border-radius:8px;box-shadow:0 10px 24px #26396d16;opacity:0;visibility:hidden;transform:translateY(-5px);transition:opacity .18s ease-out,transform .18s ease-out,visibility .18s}.language-picker.open .language-menu{opacity:1;visibility:visible;transform:translateY(0)}.language-menu button{display:block;width:100%;border:0;background:transparent;border-radius:5px;text-align:left;color:#64718a;font:inherit;font-size:12px;padding:8px 9px;cursor:pointer}.language-menu button:hover,.language-menu button:focus-visible{background:#f5f7fb;color:var(--ink);outline:none}.language-menu button[aria-selected="true"]{color:var(--ink);font-weight:700}
+    @media(max-width:800px){.language-picker{display:block}.language-menu{right:auto;left:0}}
+  </style>
+  <style>
+    .product-demo-section{padding:92px 0 84px}.product-demo-copy{text-align:center;max-width:610px;margin:0 auto 42px}.product-demo-copy .kicker{margin-bottom:16px}.product-demo-copy h2{font-size:clamp(34px,4.5vw,56px);letter-spacing:-.065em;line-height:1.02;margin:0 0 18px;color:var(--ink)}.product-demo-copy p{margin:0;color:var(--muted);font-size:16px;line-height:1.65}.demo-window{width:min(100%,1020px);height:570px;margin:0 auto;background:#fff;border:1px solid #dfe5ef;border-radius:22px;overflow:hidden;box-shadow:0 26px 65px #2a467326;position:relative}.demo-chrome{height:47px;border-bottom:1px solid #e9edf3;display:flex;align-items:center;padding:0 20px;gap:8px;background:#fbfcfe}.demo-chrome i{width:12px;height:12px;border-radius:50%;display:block}.demo-chrome i:nth-child(1){background:#ff5f57}.demo-chrome i:nth-child(2){background:#ffbd2e}.demo-chrome i:nth-child(3){background:#28c840}.demo-body{height:calc(100% - 47px);display:grid;grid-template-columns:86px 1fr}.demo-side{border-right:1px solid #edf0f5;background:#fbfcff;display:flex;flex-direction:column;align-items:center;padding:22px 0;gap:22px}.demo-logo{width:42px;height:42px;border-radius:12px;overflow:hidden;box-shadow:0 5px 15px #527be52b}.demo-logo img{width:100%;height:100%;object-fit:cover}.demo-side-icon{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;color:#455168;font-size:18px}.demo-side-icon.active{color:#7352f5;background:#eef0ff}.demo-main{position:relative;overflow:hidden;background:#fff}.demo-phase{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .48s ease-out}.demo-phase.active{opacity:1;pointer-events:auto}.demo-label{font-size:17px;color:#7b8495;margin-bottom:18px}.demo-timer{font-family:'DM Mono',monospace;font-size:61px;letter-spacing:-.08em;color:#182033;margin-bottom:45px}.demo-wave{height:70px;display:flex;align-items:center;gap:5px;margin-bottom:28px}.demo-wave b{width:5px;border-radius:5px;background:linear-gradient(180deg,#31c7eb,#7651f5);animation:demoWave .8s ease-in-out infinite alternate}.demo-wave b:nth-child(2n){animation-delay:.12s}.demo-wave b:nth-child(3n){animation-delay:.24s}.demo-status{font-size:18px;color:#182033;display:flex;align-items:center;gap:10px}.demo-status em{width:10px;height:10px;border-radius:50%;background:#8da1ff;display:block;animation:demoPulse 1.2s ease-in-out infinite}.demo-live{margin-top:36px;color:#7d8696;font-size:15px}.demo-live span{background:#f1f2f6;border-radius:99px;padding:5px 9px;margin-left:5px;color:#a3a9b4}.demo-controls{position:absolute;bottom:32px;display:flex;gap:14px}.demo-control{padding:13px 25px;border-radius:12px;border:1px solid #e2e5eb;background:#fafbfd;font-size:16px;color:#333b4a}.demo-control.stop{background:#17191d;color:#fff;border-color:#17191d}.demo-transcribe .spinner{width:38px;height:38px;border:3px solid #e8ebff;border-top-color:#6257ed;border-radius:50%;animation:demoSpin 1s linear infinite;margin-bottom:22px}.demo-transcribe strong{font-size:22px;color:#182033}.demo-progress{width:min(360px,70%);height:7px;background:#edf0f7;border-radius:99px;margin:26px 0 13px;overflow:hidden}.demo-progress i{display:block;height:100%;width:78%;border-radius:inherit;background:linear-gradient(90deg,#25c8e8,#7052f4);animation:demoProgress 2s ease-in-out infinite}.demo-cancel{font-size:14px;color:#7b8495}.demo-detail{align-items:stretch;justify-content:flex-start;padding:43px 58px}.demo-detail h3{font-size:23px;margin:0 0 8px;color:#182033}.demo-meta{font-size:13px;color:#8992a2;margin-bottom:28px}.demo-tabs{display:flex;gap:25px;border-bottom:1px solid #edf0f4;margin-bottom:29px}.demo-tabs span{padding:0 0 11px;color:#8992a2;font-size:14px}.demo-tabs .selected{color:#4c5ee7;border-bottom:2px solid #5a62ee}.demo-transcript{color:#3b4557;font-size:18px;line-height:1.72;max-width:730px}.demo-transcript mark{background:#e7e8ff;color:inherit;border-radius:4px;padding:2px 4px}.demo-player{position:absolute;left:58px;right:58px;bottom:35px;display:flex;align-items:center;gap:16px;color:#657084;font-size:13px}.demo-play{width:33px;height:33px;border-radius:50%;border:0;background:#182033;color:#fff}.demo-track{height:5px;background:#e5e8ef;border-radius:99px;flex:1;overflow:hidden}.demo-track i{display:block;height:100%;width:35%;background:linear-gradient(90deg,#22c5e9,#7652ef);animation:demoTrack 4s ease-in-out infinite alternate}.demo-organize{align-items:stretch;justify-content:flex-start;padding:55px 72px}.demo-organize h3{font-size:26px;margin:0 0 28px;color:#182033}.demo-project{border:1px solid #e8ebf1;border-radius:13px;padding:18px 20px;display:flex;align-items:center;gap:16px;max-width:620px}.demo-folder{font-size:25px}.demo-project strong{display:block;color:#182033;font-size:16px}.demo-project small{display:block;color:#8992a2;margin-top:5px;font-size:12px}@keyframes demoWave{from{transform:scaleY(.55)}to{transform:scaleY(1.15)}}@keyframes demoPulse{50%{opacity:.4}}@keyframes demoSpin{to{transform:rotate(360deg)}}@keyframes demoProgress{0%{width:8%}35%{width:48%}70%{width:76%}100%{width:100%}}@keyframes demoTrack{from{width:22%}to{width:62%}}@media(max-width:800px){.product-demo-section{padding:65px 0 58px}.demo-window{height:470px;border-radius:16px}.demo-body{grid-template-columns:58px 1fr}.demo-side{padding-top:17px;gap:17px}.demo-logo{width:34px;height:34px}.demo-side-icon{width:32px;height:32px}.demo-detail{padding:32px 25px}.demo-detail h3{font-size:20px}.demo-transcript{font-size:15px}.demo-meta{font-size:11px}.demo-player{left:25px;right:25px}.demo-organize{padding:35px 26px}.demo-timer{font-size:43px}.demo-controls{bottom:22px;gap:7px}.demo-control{padding:10px 13px;font-size:13px}}
+    @media(prefers-reduced-motion:reduce){.demo-phase,.demo-wave b,.demo-status em,.demo-transcribe .spinner,.demo-progress i,.demo-track i{animation:none!important;transition:none!important}.demo-phase:first-child{opacity:1}.demo-phase:not(:first-child){display:none}}
+  </style>
+  <style>
+    /* Fidelity pass for the hero application preview only. */
+    .app-real .real-body{grid-template-columns:29% minmax(0,1fr)}
+    .app-real .real-home{padding:28px 34px}
+    .app-real .real-cards{grid-template-columns:1fr;gap:8px}
+    .app-real .real-card{min-height:63px;padding:11px 12px;display:grid;grid-template-columns:24px 1fr auto;align-items:center;column-gap:8px}
+    .app-real .real-card b{grid-row:span 2;margin:0;font-size:17px}
+    .app-real .real-card strong{font-size:9px}
+    .app-real .real-card small{margin-top:2px}
+    .app-real .real-card:after{content:'→';color:#7884df;font-size:12px;grid-column:3;grid-row:1 / span 2}
+    .app-real .real-wave{height:24px;gap:2px;margin-top:6px;margin-bottom:25px}
+    .app-real .real-wave i{width:2px;height:var(--h,8px);--h:8px}
+    .app-real .real-wave i:nth-child(3n){--h:12px}
+    .app-real .real-wave i:nth-child(4n){--h:6px}
+    .app-real .real-wave i:nth-child(5n){--h:14px}
+    .app-real .real-transcribing small{display:none}
+    .app-real .real-transcribing:after{content:'5%';font-family:'DM Mono',monospace;font-size:9px;color:#8b94a4;margin-top:4px}
+    .app-real .real-transcribing button{border:1px solid #e4e7ee;background:#fff;border-radius:6px;padding:5px 10px}
+    .app-real .real-copy p{font-size:10px}
+    @media(max-width:800px){.app-real .real-body{grid-template-columns:78px 1fr}}
+  </style>
+  <style>
+    /* The hero preview uses an exclusive, single-view content viewport. */
+    .app-real .real-main{position:relative;overflow:hidden}
+    .app-real .real-screen{display:none;opacity:0;animation:none!important;transition:opacity .18s ease-out}
+    .app-real .real-screen.is-current{display:flex;opacity:1}
+    .app-real .real-screen.is-leaving{display:flex;opacity:0}
+    .app-real .real-body.is-collapsed{grid-template-columns:78px minmax(0,1fr)}
+    .app-real .real-body.is-collapsed .real-side{padding-left:10px;padding-right:10px}
+    .app-real .real-body.is-collapsed .real-side span{display:none}
+    .app-real .real-body.is-collapsed .real-brand strong{display:none}
+    .app-real .real-body.is-collapsed .real-side-action,.app-real .real-body.is-collapsed .real-nav{justify-content:center;padding-left:0;padding-right:0}
+    .app-real .real-body.is-collapsed .real-side-bottom{left:29px}
+    @media(prefers-reduced-motion:reduce){.app-real .real-screen{transition:none!important}}
+  </style>
+  <style>
+    /* Simplified demo pass: Home → recording → transcription → transcript → playback. */
+    .app-real .real-home .real-cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .app-real .real-home .real-greeting{margin-bottom:8px}
+    .app-real .real-home h3{margin-bottom:24px}
+    .app-real .real-home .real-recent{margin-top:34px}
+    html[lang="sl"] .hero h1{text-align:left;margin-left:0;padding-left:0;transform:none}
+    html[lang="sl"] .hero h1 .hero-line{display:inline-block;margin-left:0;padding-left:0;transform:none;text-align:left;background:none;color:var(--ink)}
+    html[lang="sl"] .hero h1 .hero-line.hero-gradient{background:var(--gradient);-webkit-background-clip:text;background-clip:text;color:transparent}
+    html[lang="sl"] .feature:nth-child(1) h3,html[lang="sl"] .feature:nth-child(2) h3{white-space:nowrap}
+    .app-real .play-word{border-radius:3px;padding:1px 2px;transition:background-color .18s ease-out}
+    .app-real .play-word.is-spoken{background:#dfe6ff}
+    .app-real .play-word.word-target.is-clicked{background:#dbe4ff;color:#3f55d9}
+    .app-real .real-transcript .real-player i b{animation:none;width:0}
+    /* Static visual baseline: only the Home view is rendered. */
+    .app-real .real-screen{animation:none!important;transition:none!important;display:none!important;opacity:0!important}
+    .app-real .real-home{display:flex!important;opacity:1!important}
+    .app-real .real-cursor{display:none!important}
+    .app-real .real-main:after{display:none!important}
+    /* Static screenshot baseline for the app preview. */
+    .app-real{padding:0!important;aspect-ratio:1788 / 1332;background:#fff url('assets/scribe-home-reference.png') center/100% 100% no-repeat;border:0;box-shadow:0 24px 55px #4665a329,0 0 42px #7a8cff12}
+    .app-real .real-chrome,.app-real .real-body{display:none!important}
+    .app-real{width:100%;height:auto;min-height:0;aspect-ratio:2028 / 1576;background:transparent;border:0;border-radius:0;overflow:visible;margin:0}
+    .app-real>img.app-screenshot{display:block;width:100%;height:100%;object-fit:contain;object-position:center}
+    .app-real{display:block!important;width:100%!important;height:auto!important;min-height:0!important;aspect-ratio:2028 / 1576!important;padding:0!important;margin:0!important;background:transparent!important;border:0!important;border-radius:16px!important;overflow:hidden!important;line-height:0!important}
+    .app-real>img.app-screenshot{display:block!important;width:100%!important;height:100%!important;margin:0!important;padding:0!important;object-fit:cover!important;object-position:center!important}
+    .app-real .real-recent{width:100%;margin-top:47px;color:#182033}
+    .app-real .real-recent-head{display:flex;justify-content:space-between;align-items:center;font-size:9px;margin-bottom:16px}
+    .app-real .real-recent-head a{color:#596ff0;font-weight:700}
+    .app-real .real-recent-row{display:flex;align-items:center;gap:8px;padding:7px 4px;border-radius:6px;font-size:8px}
+    .app-real .real-recent-row b{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:#eef0ff;color:#6677ec;font-size:11px}
+    .app-real .real-recent-row strong{display:block;color:#182033;font-size:8px}
+    .app-real .real-recent-row small{display:block;color:#929aaa;font-size:7px;margin-top:3px}
+    .app-real .real-organize{display:none!important}
+    .app-real .real-main:after{content:'';position:absolute;z-index:8;left:62%;top:38%;width:15px;height:22px;background:#111827;clip-path:polygon(0 0,0 100%,29% 73%,46% 100%,60% 93%,43% 66%,83% 66%);filter:drop-shadow(1px 1px 0 #fff) drop-shadow(-1px -1px 0 #fff);pointer-events:none;animation:realCursorPath 22s cubic-bezier(.22,1,.36,1) infinite}
+    @keyframes realCursorPath{0%,5%{left:68%;top:42%;opacity:1}10%{left:18%;top:13%;opacity:1}12%,13%{left:18%;top:13%;transform:scale(.86)}14%{transform:scale(1)}15%,42%{left:18%;top:13%;opacity:0}43%{left:70%;top:75%;opacity:1}47%,48%{left:70%;top:75%;transform:scale(.86)}49%{transform:scale(1)}50%,69%{opacity:0}70%{left:54%;top:50%;opacity:1}76%,77%{left:54%;top:50%;transform:scale(.86)}78%{transform:scale(1)}79%,84%{left:54%;top:50%;opacity:1}85%{left:11%;top:13%;opacity:1}88%,89%{left:11%;top:13%;transform:scale(.86)}90%{transform:scale(1)}91%,100%{left:16%;top:82%;opacity:0}}
+    @media(prefers-reduced-motion:reduce){.app-real .real-main:after{animation:none;opacity:0}}
+    .app-real .real-main:after{display:none}
+    .real-cursor{position:absolute;z-index:20;width:15px;height:22px;background:#111827;clip-path:polygon(0 0,0 100%,29% 73%,46% 100%,60% 93%,43% 66%,83% 66%);filter:drop-shadow(1px 1px 0 #fff) drop-shadow(-1px -1px 0 #fff);pointer-events:none;transform:translate3d(0,0,0);transition:transform 1.45s cubic-bezier(.22,1,.36,1),opacity .15s ease-out}
+    .real-cursor + *{position:relative}
+    .app-real .cursor-pressed{transform:translateY(1px);filter:brightness(.94)}
+  </style>
+  <style>
+    nav{position:sticky;top:0;z-index:50;background:var(--paper);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+    .footer .contact a{color:inherit;font-weight:500;transition:color .2s ease-out,background-position .2s ease-out}
+    .footer .contact a:hover{background:var(--gradient);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav><a class="brand" href="#top"><span class="mark"><img src="assets/scribe-logo.png" alt="" /></span> scribe</a><div class="navlinks"><a href="#how">How it works</a><a href="#local">Local first</a><div class="language-picker"><button class="language-toggle" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Select language"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 12h16.4M12 3.5c2.2 2.3 3.2 5 3.2 8.5s-1 6.2-3.2 8.5c-2.2-2.3-3.2-5-3.2-8.5s1-6.2 3.2-8.5Z"></path></svg><span class="language-current">EN</span><span class="language-chevron">⌄</span></button><div class="language-menu" role="listbox" aria-label="Language"><button type="button" role="option" data-lang="en" aria-selected="true">English</button><button type="button" role="option" data-lang="sl" aria-selected="false">Slovenščina</button></div></div><a class="navbutton" href="#download">Get Scribe</a></div></nav>
+    <main id="top">
+      <section class="hero"><div><div class="eyebrow">Transcription, rethought</div><h1>Your recordings.<br>Your computer.<br><span>Your transcripts.</span></h1><p>Turn lectures, meetings and spoken notes into timestamped text — right on your computer.</p><div class="actions"><a class="primary" href="#download">Download Scribe</a><a class="secondary" href="#how">See how it works</a></div><div class="note">Private by design · Built for long recordings</div></div><div class="app app-video" aria-label="Animated Scribe application preview"><video class="app-video-media" autoplay muted loop playsinline preload="auto"><source src="assets/Scribe-hero-v33.mp4" type="video/mp4" /></video></div></section>
+      <div class="rule"><div class="strip"><div><span class="stepnum"><span class="num">01</span> / RECORD</span><strong>Capture the moment</strong><p>Record directly in Scribe or bring in audio you already have.</p></div><div><span class="stepnum"><span class="num">02</span> / TRANSCRIBE</span><strong>Let it run locally</strong><p>Choose your language and model. Whisper does the work on your machine.</p></div><div><span class="stepnum"><span class="num">03</span> / REVISIT</span><strong>Find it again</strong><p>Jump from a word in the transcript to the exact moment in the audio.</p></div></div></div>
+      <section class="block" id="how"><div class="split"><div><div class="kicker mono">The whole workflow</div><h2>From spoken words to something you can use.</h2></div><div><p class="blockintro">Scribe keeps your audio and transcript together, so the useful part of a recording doesn’t disappear into a file folder.</p><div class="features"><div class="feature"><div class="feature-heading"><svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12h2l1.5-4 2.5 8 2-5 2 3h2l1.5-6 2 8 1.5-4H22"/><path class="accent" d="M18.5 3.5v3M17 5h3"/></svg><h3>Made for long recordings</h3></div><p>Built to keep lectures and conversations reliable from the first minute to the last.</p></div><div class="feature"><div class="feature-heading"><svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4.5h14M5 9h9M5 13.5h14M5 18h7"/><path class="accent" d="M17.5 11v7M15.5 16.5l2 2 2-2"/></svg><h3>Word-level timestamps</h3></div><p>Click a word and move straight to that point in the recording.</p></div><div class="feature"><div class="feature-heading"><svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h16"/><circle class="accent" cx="9" cy="6.5" r="2" fill="var(--paper)"/><circle class="accent" cx="15" cy="12" r="2" fill="var(--paper)"/><circle class="accent" cx="11" cy="17.5" r="2" fill="var(--paper)"/></svg><h3>Choose your model</h3></div><p>Choose between Large v3 Turbo and Large v3 based on your computer.</p></div><div class="feature"><div class="feature-heading"><svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6.5h6l1.8 2H20.5v10.5h-17z"/><path class="accent" d="M7 13h10M7 16h7"/></svg><h3>Keep your library tidy</h3></div><p>Organize recordings into projects so yesterday’s lecture stays easy to find.</p></div></div></div></div></section>
+      <section class="block" id="local"><div class="privacy"><div><span class="pill">Local-first</span><h2>Your voice stays close.</h2><p>Scribe is designed so transcription happens on your computer using Whisper. Your recordings aren’t sent to a cloud transcription service just to become text.</p></div><div class="checks"><div><span>✓</span>Transcribe on your computer</div><div><span>✓</span>Keep audio and text together</div><div><span>✓</span>Choose the model that fits your setup</div></div></div></section>
+      <section class="cta" id="download"><div class="kicker mono">Make more of what you hear</div><h2>Give your recordings a second life.</h2><p>For lectures, interviews, meetings and the thoughts you say out loud.</p><a class="primary" href="#top">Get Scribe</a></section>
     </main>
-    <script src="./site.js"></script>
-  </body>
+    <footer class="footer"><span>© 2026 Scribe</span><span class="contact"><a href="contact.html">Contact</a> · <a href="privacy.html">Privacy Policy</a></span><a class="back-top" href="#top">Back to top <span class="top-arrow">↑</span></a></footer>
+  </div>
+  <style>
+    #download{padding-top:72px}
+    #download .kicker{color:#2f78d6}
+    #download p{margin-bottom:42px}
+    #download .primary{padding:16px 22px}
+    .footer a .top-arrow{display:inline-block;transition:transform .22s ease-out}
+    .footer a:hover{color:var(--ink)}
+    .footer a:hover .top-arrow{transform:translateY(-3px)}
+    .cta.observe-ready > *{opacity:0;transform:translateY(18px);transition:opacity .44s ease-out,transform .44s cubic-bezier(.22,.8,.24,1)}
+    .cta.observe-ready > *:nth-child(2){transition-delay:.05s}
+    .cta.observe-ready > *:nth-child(3){transition-delay:.1s}
+    .cta.observe-ready > *:nth-child(4){transition-delay:.15s}
+    .cta.observe-ready.is-visible > *{opacity:1;transform:translateY(0)}
+    nav{height:auto;min-height:100px;padding:20px 0}.brand{font-size:27px}.mark{width:38px;height:38px}.privacy{background:linear-gradient(110deg,#20c8eb 0%,#287cf2 32%,#7252f2 58%,#a77ee3 100%);background-size:200% 100%;animation:privacyGradient 8.5s ease-in-out infinite alternate;box-shadow:0 16px 34px #20c8eb20,0 20px 42px #7252f218}.privacy h2{color:#fff}.privacy p{color:rgba(255,255,255,.88)}.privacy .checks div{color:rgba(255,255,255,.93);border-bottom-color:rgba(255,255,255,.25)}.privacy .checks span{color:#f5feff}.privacy .pill{background:rgba(255,255,255,.20);border:1px solid rgba(255,255,255,.24);color:#fff;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);transition:none}.privacy .pill:hover{transform:none;box-shadow:none}@keyframes privacyGradient{0%{background-position:0% 50%}100%{background-position:100% 50%}}@media(prefers-reduced-motion:reduce){.privacy{animation:none}.privacy .pill{transition:none}.privacy .pill:hover{transform:none}}
+    .app.observe-ready{opacity:0;transform:translateY(42px) scale(.98);transition:opacity .78s ease-out,transform .78s cubic-bezier(.22,1,.36,1)}.app.observe-ready.is-visible{opacity:1;transform:translateY(0) scale(1)}
+    .app-real{background:#fff;padding:0;border:1px solid #dfe5ef;border-radius:16px;overflow:hidden;box-shadow:0 24px 55px #4665a329,0 0 42px #7a8cff12;min-width:0}.real-chrome{height:34px;background:#fbfcfe;border-bottom:1px solid #edf0f4;display:flex;align-items:center;padding:0 12px;gap:8px}.real-dots{display:flex;gap:5px}.real-dots i{width:7px;height:7px;border-radius:50%;background:#ffbd2e}.real-dots i:first-child{background:#ff5f57}.real-dots i:last-child{background:#28c840}.real-title{font-size:9px;color:#9aa3b2;margin-left:4px}.real-chrome-spacer{flex:1}.real-body{height:355px;display:grid;grid-template-columns:116px minmax(0,1fr);background:#fff}.real-side{position:relative;border-right:1px solid #edf0f4;background:#fbfcff;padding:16px 9px;color:#7b8495;font-size:9px}.real-brand{display:flex;align-items:center;gap:6px;color:#182033;font-size:12px;margin:0 5px 17px}.real-brand img{width:20px;height:20px;border-radius:6px}.real-side button,.real-nav{width:100%;border:0;background:transparent;text-align:left;color:#738096;font:inherit;font-size:9px;padding:7px 7px;border-radius:6px;display:flex;align-items:center;gap:7px;margin:2px 0}.real-side-action{color:#5a65dc!important}.real-nav.active{background:#eef0ff;color:#565ee5;font-weight:700}.real-side-bottom{position:absolute;bottom:14px;left:16px;display:flex;gap:7px}.real-main{position:relative;overflow:hidden;background:#fff}.real-screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;pointer-events:none;animation:realScreen 12.5s infinite}.real-home{align-items:flex-start;padding:28px 34px;justify-content:flex-start;animation-delay:0s}.real-greeting{font-size:9px;color:#8b94a4;margin-bottom:4px}.real-screen h3{font-size:18px;color:#182033;letter-spacing:-.04em;margin:0 0 22px}.real-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:100%}.real-card{border:1px solid #e7eaf0;border-radius:9px;padding:15px 13px;min-height:85px;background:#fff}.real-card b{display:block;color:#6471e8;font-size:18px;line-height:1;margin-bottom:10px}.real-card strong{display:block;font-size:10px;color:#182033}.real-card small{display:block;color:#929aaa;font-size:8px;margin-top:4px;line-height:1.4}.real-record{animation-delay:1.4s}.real-kicker{font-size:11px;color:#7c8595;margin-bottom:9px}.real-timer{font-family:'DM Mono',monospace;font-size:30px;letter-spacing:-.08em;color:#182033;margin-bottom:19px}.real-wave{height:45px;display:flex;align-items:center;gap:3px;margin-bottom:19px}.real-wave i{width:4px;height:var(--h,22px);border-radius:4px;background:linear-gradient(180deg,#25c8e8,#7252f2);animation:realWave .72s ease-in-out infinite alternate}.real-wave i:nth-child(3n){--h:31px;animation-delay:.14s}.real-wave i:nth-child(4n){--h:15px;animation-delay:.23s}.real-wave i:nth-child(5n){--h:37px;animation-delay:.31s}.real-listening{font-size:10px;color:#263149}.real-listening span{color:#eb5b72}.real-live-copy{text-align:center;margin-top:20px;color:#7c8595}.real-live-copy strong{font-size:10px;color:#34405a}.real-live-copy em{font-style:normal;font-weight:500;font-size:8px;color:#a4aabb;background:#f0f1f5;border-radius:9px;padding:3px 5px;margin-left:4px}.real-live-copy small{display:block;font-size:8px;margin-top:5px}.real-record-controls{position:absolute;bottom:18px;display:flex;gap:7px}.real-record-controls button,.real-transcribing button,.real-organize-top button{border:1px solid #e4e7ee;background:#fafbfc;border-radius:6px;padding:6px 9px;color:#586477;font-size:9px}.real-record-controls .real-stop{background:#182033;color:white;border-color:#182033}.real-record-controls .real-discard{color:#d86b7a;background:#fff7f8;border-color:#f5dfe3}.real-transcribing{animation-delay:4.1s}.real-spinner{width:25px;height:25px;border:2px solid #e7e9ff;border-top-color:#6558ed;border-radius:50%;animation:realSpin 1s linear infinite;margin-bottom:13px}.real-transcribing strong{font-size:12px;color:#182033}.real-progress{width:150px;height:5px;background:#edf0f6;border-radius:9px;overflow:hidden;margin:14px 0 6px}.real-progress i{display:block;height:100%;width:73%;background:linear-gradient(90deg,#23c6e8,#7653f2);animation:realProgress 2s ease-in-out infinite}.real-transcribing small,.real-transcribing button{font-size:8px;color:#8b94a4}.real-transcribing button{border:0;background:none;margin-top:14px}.real-transcript{align-items:stretch;justify-content:flex-start;padding:25px 29px;animation-delay:5.6s}.real-detail-top{display:grid;grid-template-columns:auto 1fr;gap:3px 9px;align-items:center}.real-detail-top>span{grid-row:span 2;color:#606ee1;font-size:9px}.real-detail-top strong{font-size:15px;color:#182033}.real-detail-top small{font-size:8px;color:#929aaa}.real-tabs{display:flex;gap:16px;border-bottom:1px solid #eef0f4;margin-top:20px;margin-bottom:15px}.real-tabs>*{font-size:9px;color:#9aa3b2;padding-bottom:7px}.real-tabs b{color:#5961df;border-bottom:2px solid #5961df}.real-copy{font-size:10px;line-height:1.7;color:#4a566c;max-width:420px}.real-copy p{margin:0 0 9px}.real-copy mark{background:#e9e8ff;color:inherit;border-radius:3px;padding:1px 2px}.real-player{position:absolute;bottom:18px;left:29px;right:29px;display:flex;align-items:center;gap:7px;color:#8c96a5;font-size:8px}.real-player button{border:0;background:#182033;color:#fff;border-radius:50%;width:22px;height:22px;font-size:8px}.real-player i{height:4px;background:#e7eaf0;border-radius:5px;flex:1;overflow:hidden}.real-player i b{display:block;width:38%;height:100%;background:linear-gradient(90deg,#24c8e9,#7652f2);animation:realTrack 2.2s ease-in-out infinite alternate}.real-organize{align-items:stretch;justify-content:flex-start;padding:28px 33px;animation-delay:9.7s}.real-organize-top{display:flex;justify-content:space-between;color:#182033;font-size:13px;font-weight:700}.real-organize-top button{padding:5px 7px;color:#5e66de}.real-organize h3{font-size:11px;color:#7c8595;margin:24px 0 9px}.real-project{display:flex;gap:10px;align-items:center;border:1px solid #e7eaf0;border-radius:8px;padding:11px}.real-project>b{font-size:17px;color:#665ee3}.real-project strong{display:block;color:#182033;font-size:9px}.real-project small{display:block;color:#9aa3b2;font-size:7px;margin-top:4px}@keyframes realScreen{0%,10%{opacity:1;pointer-events:auto}11%,100%{opacity:0;pointer-events:none}}.real-record{animation-name:realRecord}.real-transcribing{animation-name:realTranscribe}.real-transcript{animation-name:realTranscript}.real-organize{animation-name:realOrganize}@keyframes realRecord{0%,10%{opacity:0}11%,32%{opacity:1}33%,100%{opacity:0}}@keyframes realTranscribe{0%,32%{opacity:0}33%,45%{opacity:1}46%,100%{opacity:0}}@keyframes realTranscript{0%,44%{opacity:0}45%,78%{opacity:1}79%,100%{opacity:0}}@keyframes realOrganize{0%,77%{opacity:0}78%,100%{opacity:1}}@keyframes realWave{from{transform:scaleY(.55)}to{transform:scaleY(1.12)}}@keyframes realSpin{to{transform:rotate(360deg)}}@keyframes realProgress{0%{width:8%}100%{width:100%}}@keyframes realTrack{from{width:20%}to{width:62%}}@media(max-width:800px){.app-real{width:100%}.real-body{grid-template-columns:78px 1fr;height:315px}.real-side{padding-left:6px;padding-right:6px}.real-side span{display:none}.real-brand strong{font-size:10px}.real-home{padding:24px 20px}.real-transcript{padding:22px 20px}.real-player{left:20px;right:20px}}@media(prefers-reduced-motion:reduce){.real-screen{animation:none!important}.real-home{opacity:1}.real-wave i,.real-spinner,.real-progress i,.real-player i b{animation:none!important}}
+    .footer{padding:30px 0;display:grid;grid-template-columns:1fr auto 1fr;align-items:center}.footer .contact{justify-self:center}.footer .back-top{justify-self:end}.footer .contact a{font-weight:500;color:#66748b;transition:color .3s ease-out,background-position .3s ease-out}.footer .contact a:hover{background-image:var(--gradient);background-size:220% 100%;background-position:0 0;-webkit-background-clip:text;background-clip:text;color:transparent;animation:footerEmailGradient 3.2s ease-in-out infinite alternate}.footer a:focus-visible{outline:2px solid #62d7ef;outline-offset:4px;border-radius:3px}@keyframes footerEmailGradient{from{background-position:0 0}to{background-position:100% 0}}@media(prefers-reduced-motion:reduce){.footer .contact a:hover{animation:none}}
+    @media(max-width:800px){#download{padding-top:64px}.footer{display:flex;gap:16px;flex-direction:column;align-items:center;text-align:center}.footer .contact,.footer .back-top{justify-self:auto}}
+  </style>
+  <script>
+    (() => {
+      const checks = document.querySelector('.checks');
+      if (!checks) return;
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      checks.classList.add('observe-ready');
+      const observer = new IntersectionObserver((entries, instance) => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          checks.classList.add('is-visible');
+          instance.disconnect();
+        }
+      }, { threshold: 0.25 });
+      observer.observe(checks);
+    })();
+  </script>
+  <script>
+    (() => {
+      const cta = document.querySelector('.cta');
+      if (!cta || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      cta.classList.add('observe-ready');
+      const observer = new IntersectionObserver((entries, instance) => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          cta.classList.add('is-visible');
+          instance.disconnect();
+        }
+      }, { threshold: 0.2 });
+      observer.observe(cta);
+    })();
+  </script>
+  <script>
+    (() => {
+      const mockup = document.querySelector('.app');
+      return;
+      if (!mockup || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      mockup.classList.add('observe-ready');
+      const observer = new IntersectionObserver((entries, instance) => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          mockup.classList.add('is-visible');
+          instance.disconnect();
+        }
+      }, { threshold: 0.2 });
+      observer.observe(mockup);
+    })();
+  </script>
+  <script>
+    (() => {
+      return;
+      const app = document.querySelector('.app-real');
+      if (!app) return;
+      const body = app.querySelector('.real-body');
+      const viewport = app.querySelector('.real-main');
+      const screens = [...app.querySelectorAll('.real-screen')];
+      const byName = name => app.querySelector(`.real-${name}`);
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let timers = [];
+      let intervals = [];
+      let current = null;
+      let cycle = 0;
+      const cursor = document.createElement('div');
+      cursor.className = 'real-cursor';
+      viewport.appendChild(cursor);
+      const clearTimers = () => { timers.forEach(clearTimeout); timers = []; intervals.forEach(clearInterval); intervals = []; };
+      const wait = (fn, ms) => { const id = setTimeout(fn, ms); timers.push(id); return id; };
+      const moveCursorTo = (element, duration = 1400, point = .5) => {
+        if (!element) return;
+        const target = element.getBoundingClientRect();
+        const base = viewport.getBoundingClientRect();
+        const x = target.left - base.left + target.width * point;
+        const y = target.top - base.top + target.height * .5;
+        cursor.style.transitionDuration = `${duration}ms`;
+        cursor.style.transform = `translate3d(${Math.max(2, x)}px,${Math.max(2, y)}px,0)`;
+      };
+      const neutralCursor = () => { cursor.style.transitionDuration = '0ms'; cursor.style.transform = 'translate3d(62%,38%,0)'; };
+      const show = name => {
+        const next = byName(name);
+        if (!next || next === current) return;
+        const swap = () => {
+          if (current) { current.classList.remove('is-current','is-leaving'); current.style.display = 'none'; }
+          next.style.display = 'flex';
+          next.classList.remove('is-current');
+          current = next;
+          body.classList.toggle('is-collapsed', name === 'transcribing');
+          if (name === 'home' && !next.querySelector('.real-recent')) {
+            next.insertAdjacentHTML('beforeend', '<div class="real-recent"><div class="real-recent-head"><strong>Nedavni posnetki</strong><a>Prikaži vse</a></div><div class="real-recent-row"><b>▥</b><span><strong>Nov posnetek</strong><small>20. sep. 2026 · 13:45 · 0m · Slovenščina</small></span></div><div class="real-recent-row"><b>▥</b><span><strong>Nov posnetek</strong><small>20. sep. 2026 · 13:45 · 0m · Slovenščina</small></span></div><div class="real-recent-row"><b>▥</b><span><strong>test 1</strong><small>20. sep. 2026 · 12:04 · 0m · Slovenščina</small></span></div></div>');
+          }
+          if (name === 'transcript') {
+            const title = next.querySelector('.real-name');
+            if (title) title.textContent = 'Nov posnetek';
+            const copy = next.querySelector('.real-copy');
+            if (copy) {
+              const words = 'Pozdravljeni v aplikaciji Scribe! Scribe vam omogoča, da hitro in enostavno posnamete govor ter ga samodejno pretvorite v besedilo. Posnetek lahko nato poslušate, posamezne dele posnetka pa hitro poiščete neposredno v prepisu.'.split(' ');
+              copy.innerHTML = `<p>${words.map(word => `<span class="play-word">${word}</span>`).join(' ')} </p>`;
+              wait(() => {
+                const items = [...copy.querySelectorAll('.play-word')];
+                const target = items[Math.floor(items.length * .55)];
+                if (target) target.classList.add('word-target');
+              }, 900);
+            }
+            const playerTime = next.querySelector('.real-player span');
+            const playerFill = next.querySelector('.real-player i b');
+            if (playerTime) playerTime.textContent = '00:00';
+            if (playerFill) { playerFill.style.animation = 'none'; playerFill.style.width = '0%'; }
+          }
+          requestAnimationFrame(() => next.classList.add('is-current'));
+        };
+        if (!current || reduced) { swap(); return; }
+        current.classList.remove('is-current');
+        current.classList.add('is-leaving');
+        wait(swap, 150);
+      };
+      const reset = () => {
+        clearTimers();
+        cycle += 1;
+        screens.forEach(screen => { screen.classList.remove('is-current','is-leaving'); screen.style.display = 'none'; });
+        current = null;
+        body.classList.remove('is-collapsed');
+        show('home');
+        neutralCursor();
+      };
+      const schedule = () => {
+        clearTimers();
+        const token = cycle;
+        wait(() => { if (token === cycle) moveCursorTo(app.querySelector('.real-start'), 1450, .3); }, 1000);
+        wait(() => { if (token === cycle) { const card = app.querySelector('.real-start'); if (card) card.classList.add('cursor-pressed'); } }, 2450);
+        wait(() => { if (token === cycle) { const card = app.querySelector('.real-start'); if (card) card.classList.remove('cursor-pressed'); show('record'); } }, 2700);
+        wait(() => { if (token === cycle) moveCursorTo(app.querySelector('.real-stop'), 1200, .5); }, 9300);
+        wait(() => { if (token === cycle) { const stop = app.querySelector('.real-stop'); if (stop) stop.classList.add('cursor-pressed'); } }, 10450);
+        wait(() => { if (token === cycle) { const stop = app.querySelector('.real-stop'); if (stop) stop.classList.remove('cursor-pressed'); show('transcribing'); } }, 10800);
+        wait(() => { if (token === cycle) show('transcript'); }, 15000);
+        wait(() => { if (token === cycle) moveCursorTo(current?.querySelector('.word-target'), 1300, .5); }, 16100);
+        wait(() => {
+          if (token !== cycle || !current || !current.classList.contains('real-transcript')) return;
+          const target = current.querySelector('.word-target');
+          if (target) target.classList.add('is-clicked');
+          const fill = current.querySelector('.real-player i b');
+          if (fill) { fill.style.animation = 'none'; fill.style.width = '55%'; }
+          const clock = current.querySelector('.real-player span');
+          if (clock) clock.textContent = '00:16';
+        }, 17700);
+        wait(() => { if (token === cycle) moveCursorTo(current?.querySelector('.real-detail-top>span'), 1200, .5); }, 18500);
+        wait(() => { if (token === cycle && current?.classList.contains('real-transcript')) show('home'); }, 19800);
+        wait(() => { if (token === cycle) { reset(); schedule(); } }, 23000);
+      };
+      reset();
+      schedule();
+    })();
+  </script>
+  <script>
+    (() => {
+      const home = document.querySelector('.real-home');
+      if (!home || home.querySelector('.real-recent')) return;
+      home.insertAdjacentHTML('beforeend', '<div class="real-recent"><div class="real-recent-head"><strong>Nedavni posnetki</strong><a>Prikaži vse</a></div><div class="real-recent-row"><b>▥</b><span><strong>Nov posnetek</strong><small>20. sep. 2026 · 15:41 · 0m · Slovenščina</small></span></div></div>');
+    })();
+  </script>
+  <script>
+    (() => {
+      const app = document.querySelector('.app-real');
+      if (!app || app.querySelector('.app-screenshot')) return;
+      const image = document.createElement('img');
+      image.className = 'app-screenshot';
+      image.src = 'assets/scribe-home-reference.png';
+      image.alt = 'Scribe application home screen';
+      app.appendChild(image);
+    })();
+  </script>
+  <script>
+    (() => {
+      const picker = document.querySelector('.language-picker');
+      const toggle = document.querySelector('.language-toggle');
+      const menu = document.querySelector('.language-menu');
+      if (!picker || !toggle || !menu) return;
+      const fields = {
+        en: {
+          navHow:'How it works', navLocal:'Local first', navCta:'Get Scribe',
+          eyebrow:'Transcription, rethought', hero:'Your recordings.<br>Your computer.<br><span>Your transcripts.</span>', heroText:'Turn lectures, meetings and spoken notes into timestamped text — right on your computer.', download:'Download Scribe', how:'See how it works', note:'Private by design · Built for long recordings',
+          recordLabel:'01 / RECORD', recordTitle:'Capture the moment', recordText:'Record directly in Scribe or bring in audio you already have.', transcribeLabel:'02 / TRANSCRIBE', transcribeTitle:'Let it run locally', transcribeText:'Choose your language and model. Whisper does the work on your machine.', revisitLabel:'03 / REVISIT', revisitTitle:'Find it again', revisitText:'Jump from a word in the transcript to the exact moment in the audio.',
+          workflowLabel:'The whole workflow', workflowTitle:'From spoken words to something you can use.', workflowIntro:'Scribe keeps your audio and transcript together, so the useful part of a recording doesn’t disappear into a file folder.',
+          f1:'Made for long recordings', f1t:'Built to keep lectures and conversations reliable from the first minute to the last.', f2:'Word-level timestamps', f2t:'Click a word and move straight to that point in the recording.', f3:'Choose your model', f3t:'Choose between Large v3 Turbo and Large v3 based on your computer.', f4:'Keep your library tidy', f4t:'Organize recordings into projects so yesterday’s lecture stays easy to find.',
+          localPill:'Local-first', localTitle:'Your voice stays close.', localText:'Scribe is designed so transcription happens on your computer using Whisper. Your recordings aren’t sent to a cloud transcription service just to become text.', check1:'✓ Transcribe on your computer', check2:'✓ Keep audio and text together', check3:'✓ Choose the model that fits your setup.',
+          ctaLabel:'Make more of what you hear', ctaTitle:'Give your recordings a second life.', ctaText:'For lectures, interviews, meetings and the thoughts you say out loud.', ctaButton:'Get Scribe', contact:'Contact · <a href="mailto:scribe.teamh@gmail.com">scribe.teamh@gmail.com</a> · <a href="https://sportiyeet.github.io/Scribe/privacy/">Privacy Policy</a>', back:'Back to top <span class="top-arrow">↑</span>', langLabel:'Select language'
+        },
+        sl: {
+          navHow:'Kako deluje', navLocal:'Lokalno najprej', navCta:'Pridobi Scribe',
+          eyebrow:'Transkripcija na novo', hero:'<span class="hero-line">Vaši posnetki.</span><br><span class="hero-line">Vaš računalnik.</span><br><span class="hero-line hero-gradient">Vaši prepisi.</span>', heroText:'Predavanja, sestanke in glasovne zapiske pretvorite v besedilo s časovnimi oznakami — neposredno na svojem računalniku.', download:'Prenesi Scribe', how:'Oglejte si, kako deluje', note:'Zasebno po zasnovi · Ustvarjeno za dolge posnetke',
+          recordLabel:'01 / POSNEMI', recordTitle:'Ujemite trenutek', recordText:'Snemajte neposredno v Scribe ali uvozite posnetek, ki ga že imate.', transcribeLabel:'02 / PREPIŠI', transcribeTitle:'Obdelava poteka lokalno', transcribeText:'Izberite jezik in model. Whisper vse opravi na vašem računalniku.', revisitLabel:'03 / PONOVNO POGLEJ', revisitTitle:'Hitro ga znova najdite', revisitText:'Kliknite besedo v prepisu in skočite na točen trenutek v posnetku.',
+          workflowLabel:'Celoten potek', workflowTitle:'Od izgovorjenih besed do nečesa, kar lahko uporabite.', workflowIntro:'Scribe ohrani posnetek in prepis skupaj, zato uporabni del posnetka ne izgine v mapi z datotekami.',
+          f1:'Za dolge posnetke', f1t:'Zanesljivo za predavanja in pogovore od prve do zadnje minute.', f2:'Oznake na ravni besed', f2t:'Kliknite besedo in skočite neposredno na ta del posnetka.', f3:'Izberite svoj model', f3t:'Izberite med Large v3 Turbo in Large v3 glede na zmogljivosti svojega računalnika.', f4:'Uredite svojo knjižnico', f4t:'Posnetke organizirajte v projekte, da bo včerajšnje predavanje vedno pri roki.',
+          localPill:'Lokalno najprej', localTitle:'Vaš glas ostane blizu.', localText:'Scribe je zasnovan tako, da prepisovanje poteka na vašem računalniku z uporabo Whisperja. Vaši posnetki se ne pošiljajo v oblačno storitev samo zato, da bi postali besedilo.', check1:'✓ Prepisujte na svojem računalniku', check2:'✓ Posnetek in besedilo ostaneta skupaj', check3:'✓ Izberite model, ki ustreza vaši napravi.',
+          ctaLabel:'Izkoristite vse, kar slišite', ctaTitle:'Dajte svojim posnetkom novo življenje.', ctaText:'Za predavanja, intervjuje, sestanke in misli, ki jih izgovorite na glas.', ctaButton:'Pridobi Scribe', contact:'Stik · <a href="mailto:scribe.teamh@gmail.com">scribe.teamh@gmail.com</a> · <a href="https://sportiyeet.github.io/Scribe/privacy/">Pravilnik o zasebnosti</a>', back:'Na vrh <span class="top-arrow">↑</span>', langLabel:'Izberite jezik'
+        }
+      };
+      const setText = (selector, value, html = false) => { const el = document.querySelector(selector); if (el) html ? el.innerHTML = value : el.textContent = value; };
+      const setAll = (selector, value, html = false) => document.querySelectorAll(selector).forEach(el => html ? el.innerHTML = value : el.textContent = value);
+      const applyLanguage = lang => {
+        const t = fields[lang] || fields.en;
+        document.documentElement.lang = lang === 'sl' ? 'sl' : 'en';
+        setText('.navlinks a[href="#how"]', t.navHow); setText('.navlinks a[href="#local"]', t.navLocal); setText('.navbutton', t.navCta);
+        setText('.eyebrow', t.eyebrow); setText('.hero h1', t.hero, true); setText('.hero p', t.heroText); setText('.hero .primary', t.download, true); setText('.secondary', t.how); setText('.note', t.note);
+        setText('.strip>div:nth-child(1) .stepnum', t.recordLabel); setText('.strip>div:nth-child(1) strong', t.recordTitle); setText('.strip>div:nth-child(1) p', t.recordText); setText('.strip>div:nth-child(2) .stepnum', t.transcribeLabel); setText('.strip>div:nth-child(2) strong', t.transcribeTitle); setText('.strip>div:nth-child(2) p', t.transcribeText); setText('.strip>div:nth-child(3) .stepnum', t.revisitLabel); setText('.strip>div:nth-child(3) strong', t.revisitTitle); setText('.strip>div:nth-child(3) p', t.revisitText);
+        setText('#how .kicker', t.workflowLabel); setText('#how h2', t.workflowTitle); setText('#how .blockintro', t.workflowIntro); setText('.feature:nth-child(1) h3', t.f1); setText('.feature:nth-child(1) p', t.f1t); setText('.feature:nth-child(2) h3', t.f2); setText('.feature:nth-child(2) p', t.f2t); setText('.feature:nth-child(3) h3', t.f3); setText('.feature:nth-child(3) p', t.f3t); setText('.feature:nth-child(4) h3', t.f4); setText('.feature:nth-child(4) p', t.f4t);
+        setText('#local .pill', t.localPill); setText('#local h2', t.localTitle); setText('#local .privacy p', t.localText); setText('.checks div:nth-child(1)', t.check1); setText('.checks div:nth-child(2)', t.check2); setText('.checks div:nth-child(3)', t.check3);
+        setText('#download .kicker', t.ctaLabel); setText('#download h2', t.ctaTitle); setText('#download p', t.ctaText); setText('#download .primary', t.ctaButton, true); setText('.contact', t.contact, true); setText('.back-top', t.back, true); toggle.querySelector('.language-current').textContent = lang === 'sl' ? 'SL' : 'EN'; toggle.setAttribute('aria-label', t.langLabel);
+        menu.querySelectorAll('[data-lang]').forEach(button => { const selected = button.dataset.lang === lang; button.setAttribute('aria-selected', String(selected)); });
+        localStorage.setItem('scribe-language', lang);
+      };
+      const stored = localStorage.getItem('scribe-language'); applyLanguage(stored === 'sl' ? 'sl' : 'en');
+      toggle.addEventListener('click', () => { const open = picker.classList.toggle('open'); toggle.setAttribute('aria-expanded', String(open)); if (open) menu.querySelector('[aria-selected="true"]').focus(); });
+      menu.addEventListener('click', event => { const button = event.target.closest('[data-lang]'); if (!button) return; applyLanguage(button.dataset.lang); picker.classList.remove('open'); toggle.setAttribute('aria-expanded','false'); toggle.focus(); });
+      document.addEventListener('click', event => { if (!picker.contains(event.target)) { picker.classList.remove('open'); toggle.setAttribute('aria-expanded','false'); } });
+      document.addEventListener('keydown', event => { if (event.key === 'Escape') { picker.classList.remove('open'); toggle.setAttribute('aria-expanded','false'); toggle.focus(); } });
+    })();
+  </script>
+  <script>
+    (() => {
+      return;
+      const local = document.querySelector('#local');
+      if (!local) return;
+      const bars = Array.from({length:38}, (_, i) => `<b style="height:${18 + ((i * 13) % 34)}px"></b>`).join('');
+      local.insertAdjacentHTML('beforebegin', `<section class="product-demo-section" aria-label="Scribe product demonstration"><div class="product-demo-copy"><div class="kicker mono">Od zvoka do zapisa</div><h2>Posnemite. Scribe poskrbi za ostalo.</h2><p>Posnemite predavanje, sestanek ali idejo. Scribe zvok prepiše na vašem računalniku in ga shrani skupaj s posnetkom.</p></div><div class="demo-window"><div class="demo-chrome"><i></i><i></i><i></i></div><div class="demo-body"><aside class="demo-side"><div class="demo-logo"><img src="assets/scribe-logo.png" alt="Scribe" /></div><div class="demo-side-icon active">＋</div><div class="demo-side-icon">⌂</div><div class="demo-side-icon">▱</div><div class="demo-side-icon">⌕</div></aside><div class="demo-main"><div class="demo-phase demo-record active"><div class="demo-label">Snemanje</div><div class="demo-timer">00:00:<span class="demo-seconds">01</span></div><div class="demo-wave">${bars}</div><div class="demo-status"><em></em>Poslušam...</div><div class="demo-live">Prepis v živo <span>Kmalu</span></div><div class="demo-controls"><div class="demo-control">Ⅱ Premor</div><div class="demo-control stop">■ Ustavi</div><div class="demo-control">♜ Zavrzi</div></div></div><div class="demo-phase demo-transcribe"><div class="spinner"></div><strong>Prepisovanje...</strong><div class="demo-progress"><i></i></div><div class="demo-cancel">Prekliči</div></div><div class="demo-phase demo-detail"><h3>Nov posnetek</h3><div class="demo-meta">20. sep. 2026 · 12:04 · 00:00:31 · Slovenščina</div><div class="demo-tabs"><span class="selected">Prepis</span><span>Zapiski</span><span>Povzetek</span></div><div class="demo-transcript">Danes bomo govorili o <mark>umetni inteligenci</mark> in o tem, kako spreminja <mark>način našega dela</mark>. Pogledali bomo nekaj praktičnih primerov in glavne prednosti novih orodij.</div><div class="demo-player"><button class="demo-play">▶</button><span>00:08</span><div class="demo-track"><i></i></div><span>00:31</span></div></div><div class="demo-phase demo-organize"><h3>Predavanja</h3><div class="demo-project"><div class="demo-folder">▱</div><div><strong>Umetna inteligenca – predavanje</strong><small>Predavanja · 20. sep. 2026 · 12:04 · Slovenščina</small></div></div></div></div></div></div></section>`);
+      const demo = document.querySelector('.product-demo-section');
+      const phases = demo.querySelectorAll('.demo-phase');
+      const seconds = demo.querySelector('.demo-seconds');
+      let phase = 0;
+      const showPhase = index => { phases.forEach((item, i) => item.classList.toggle('active', i === index)); };
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      const timer = setInterval(() => { phase = (phase + 1) % phases.length; showPhase(phase); }, 3000);
+      setInterval(() => { if (phase === 0) seconds.textContent = String((Number(seconds.textContent) % 4) + 1).padStart(2,'0'); }, 900);
+      window.addEventListener('beforeunload', () => clearInterval(timer), {once:true});
+    })();
+  </script>
+  <script>
+    (() => {
+      const destination = 'download.html';
+      document.querySelectorAll('.navbutton, .hero .primary, .cta .primary').forEach(link => {
+        link.href = destination;
+      });
+    })();
+  </script>
+  <script>
+    const updateFooterLinks=()=>{const sl=localStorage.getItem('scribe-language')==='sl';const c=document.querySelector('.footer .contact');if(c)c.innerHTML=sl?'<a href="contact.html">Kontakt</a> · <a href="privacy.html">Politika zasebnosti</a>':'<a href="contact.html">Contact</a> · <a href="privacy.html">Privacy Policy</a>';document.querySelector('.brand').lastChild.textContent=' Scribe'};
+    updateFooterLinks(); document.querySelectorAll('[data-lang]').forEach(b=>b.addEventListener('click',()=>setTimeout(updateFooterLinks,0)));
+  </script>
+</body>
 </html>
