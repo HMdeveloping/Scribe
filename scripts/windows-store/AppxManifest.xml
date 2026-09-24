@@ -7,7 +7,7 @@
          IgnorableNamespaces="uap desktop uap10 rescap">
   <Identity Name="MHDeveloping.ScribeforWindows"
             Publisher="CN=0AE4EB60-E72D-4CB9-B2CF-D519F5C9ECA4"
-            Version="0.1.23.0"
+            Version="0.1.25.0"
             ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>Scribe for Windows</DisplayName>

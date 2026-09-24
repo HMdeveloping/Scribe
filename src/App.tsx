@@ -55,6 +55,8 @@ import { useWhisperModelDownloads } from "./hooks/useWhisperModelDownloads";
 import { createTranslator, currentGreetingKey, type AppLanguage, type TranslationKey } from "./i18n";
 import type { Project, RecordingDetails, RecordingSummary } from "./types/library";
 
+const isMicrosoftStoreBuild = import.meta.env.VITE_SCRIBE_CHANNEL === "microsoft-store";
+
 type TranscriptionErrorKind = "model_missing" | "model_downloading" | "model_ready" | "ffmpeg_missing" | "whisper_missing" | "audio_missing" | "conversion_failed" | "transcript_unavailable" | "transcription";
 
 type ClassifiedTranscriptionError = {
@@ -495,6 +497,7 @@ function App() {
   });
 
   const checkForUpdates = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (isMicrosoftStoreBuild) return;
     if (import.meta.env.DEV && silent) return;
     setUpdateError("");
     setUpdateErrorCopy("");
@@ -535,6 +538,7 @@ function App() {
   }, [t]);
 
   const installAvailableUpdate = useCallback(async () => {
+    if (isMicrosoftStoreBuild) return;
     const availableUpdate = updateRef.current;
     if (!availableUpdate) return;
     let downloadedBytes = 0;
@@ -681,6 +685,7 @@ function App() {
   }
 
   useEffect(() => {
+    if (isMicrosoftStoreBuild) return;
     void checkForUpdates({ silent: true });
     const interval = window.setInterval(() => {
       void checkForUpdates({ silent: true });

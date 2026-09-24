@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { languages, type AppLanguage, type TFunction } from "../i18n";
 import type { WhisperDownloadController } from "../hooks/useWhisperModelDownloads";
 
+const isMicrosoftStoreBuild = import.meta.env.VITE_SCRIBE_CHANNEL === "microsoft-store";
+
 export type WhisperModelOption = {
   id: string;
   name: string;
@@ -307,7 +309,7 @@ export function SettingsView({
                 </span>
                 <span className="settings-row-value">{t(updateStatus === "ready" ? "updateReady" : updateStatus === "up-to-date" ? "upToDate" : updateStatus === "available" ? "updateAvailable" : "about")}</span>
               </div>
-              <button className="settings-row" onClick={onCheckForUpdates} disabled={updateStatus === "checking" || updateStatus === "downloading" || updateStatus === "installing"}>
+              {!isMicrosoftStoreBuild ? <button className="settings-row" onClick={onCheckForUpdates} disabled={updateStatus === "checking" || updateStatus === "downloading" || updateStatus === "installing"}>
                 <span>
                   <strong>{t("checkForUpdates")}</strong>
                   <small>
@@ -321,7 +323,7 @@ export function SettingsView({
                 <span className="settings-row-value">
                   {updateStatus === "checking" || updateStatus === "downloading" || updateStatus === "installing" ? <LoaderCircle size={15} /> : <ChevronRight size={17} />}
                 </span>
-              </button>
+              </button> : null}
               <button className="settings-row" onClick={onShowWelcomeGuide}>
                 <span>
                   <strong>{t("showWelcomeGuide")}</strong>
