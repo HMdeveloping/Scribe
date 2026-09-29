@@ -514,15 +514,17 @@ jobs:
         run: |
           set -euo pipefail
           cat > release-notes.md <<'EOF'
-          Scribe v0.1.25
+          Scribe v1.0.0 — Official V1
 
-          Pre-V1 release focused on validating the macOS microphone runtime fix.
+          Official V1 release for direct macOS and Windows distribution.
 
           Highlights:
-          - improved macOS microphone startup and error handling
-          - more accurate permission and capture error classification
-          - targeted diagnostics for microphone initialization failures
-          - no user-data migration or destructive changes
+          - local recording and transcription
+          - Whisper Large v3 Turbo and Large v3 models
+          - Import Audio, Projects, and Recordings
+          - clickable timestamped transcript words and synchronized navigation
+          - local model management and multilingual UI
+          - local-first processing for direct macOS and Windows distribution
 
           Microsoft Store availability is separate and is not included in this release.
           EOF
