@@ -222,9 +222,9 @@ button {
 }
 
 .app.is-macos.is-fullscreen .app-titlebar .titlebar-sidebar-toggle {
-  left: calc(var(--sidebar-icon-center-expanded) - 17px);
-  width: 34px;
-  height: 34px;
+  left: calc(var(--sidebar-icon-center-expanded) - 24px);
+  width: 48px;
+  height: 32px;
 }
 
 .app.is-macos.is-fullscreen .app-titlebar {
@@ -267,12 +267,12 @@ button {
 }
 
 .app.is-macos.is-fullscreen.sidebar-is-collapsed .app-titlebar .titlebar-sidebar-toggle {
-  left: calc(var(--sidebar-icon-center-collapsed) - 17px);
+  left: calc(var(--sidebar-icon-center-collapsed) - 24px);
 }
 
 .app.is-macos.is-fullscreen .app-titlebar .titlebar-sidebar-toggle svg {
-  width: 19px;
-  height: 19px;
+  width: 17px;
+  height: 17px;
 }
 
 .app.is-macos:not(.is-fullscreen) .sidebar .sidebar-toggle,
@@ -290,7 +290,19 @@ button {
   display: grid;
   order: -1;
   width: 48px;
-  margin-left: 8px;
+  margin-left: 1px;
+}
+
+.app.is-macos:not(.is-fullscreen) .sidebar:not(.is-collapsed) .brand {
+  padding-left: 1px;
+}
+
+.app.is-macos:not(.is-fullscreen) .sidebar:not(.is-collapsed) .new-recording,
+.app.is-macos:not(.is-fullscreen) .sidebar:not(.is-collapsed) .sidebar-import-audio,
+.app.is-macos:not(.is-fullscreen) .sidebar:not(.is-collapsed) .nav-item,
+.app.is-macos:not(.is-fullscreen) .sidebar:not(.is-collapsed) .settings-button {
+  padding-left: 16px;
+  padding-right: 16px;
 }
 
 .app.is-macos.is-fullscreen .sidebar .sidebar-toggle {
