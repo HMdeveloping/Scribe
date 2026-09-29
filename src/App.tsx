@@ -350,7 +350,6 @@ function App() {
   const [finalizingProgress, setFinalizingProgress] = useState<TranscriptionProgress | null>(null);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("auto");
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const titlebarToggleRef = useRef<HTMLButtonElement>(null);
   const activeSelectionClearRef = useRef<() => void>(() => {});
   const [sharedRecordingSelectedIds, setSharedRecordingSelectedIds] = useState<Set<string>>(new Set());
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
@@ -1300,9 +1299,11 @@ function App() {
       <WebviewContextMenuGuard />
       <div className="app-titlebar">
         <div className="titlebar-drag-region" onMouseDown={(event) => { void dragWindowFromTitlebar(event); }} onDoubleClick={(event) => { void toggleNativeTitlebarAction(event); }} aria-hidden="true" />
-        <button ref={titlebarToggleRef} className="sidebar-toggle titlebar-sidebar-toggle" onClick={toggleSidebar} aria-label={toggleSidebarLabel} title={toggleSidebarLabel}>
-          {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-        </button>
+        {isFullscreen ? (
+          <button className="sidebar-toggle titlebar-sidebar-toggle" onClick={toggleSidebar} aria-label={toggleSidebarLabel} title={toggleSidebarLabel}>
+            {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+          </button>
+        ) : null}
       </div>
       <div className="app-body">
       <SidebarSelectionBoundary className={`sidebar${sidebarCollapsed ? " is-collapsed" : ""}`} onClearSelection={() => {

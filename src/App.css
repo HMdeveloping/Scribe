@@ -275,7 +275,25 @@ button {
   height: 19px;
 }
 
-.sidebar .sidebar-toggle {
+.app.is-macos:not(.is-fullscreen) .sidebar .sidebar-toggle,
+.app:not(.is-macos) .sidebar .sidebar-toggle {
+  display: none;
+}
+
+.app.is-macos:not(.is-fullscreen) .sidebar-header {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.app.is-macos:not(.is-fullscreen) .sidebar-header .sidebar-toggle {
+  display: grid;
+  order: -1;
+  width: 48px;
+  margin-left: 8px;
+}
+
+.app.is-macos.is-fullscreen .sidebar .sidebar-toggle {
   display: none;
 }
 
