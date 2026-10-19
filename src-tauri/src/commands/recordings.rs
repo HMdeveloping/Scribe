@@ -1096,6 +1096,20 @@ fn model_definition(model_id: &str) -> Option<&'static WhisperModelDefinition> {
     WHISPER_MODELS.iter().find(|model| model.id == model_id)
 }
 
+fn whisper_model_file_looks_valid(path: &Path, expected_bytes: Option<u64>) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if expected_bytes.is_some_and(|expected| metadata.len() != expected) {
+        return false;
+    }
+    let mut header = [0_u8; 4];
+    File::open(path)
+        .and_then(|mut file| file.read_exact(&mut header))
+        .is_ok()
+        && header == *b"lmgg"
+}
+
 fn supported_model_fallback(model_dir: &Path, requested: &str) -> String {
     if model_definition(requested).is_some() {
         return requested.to_string();
@@ -1639,6 +1653,15 @@ fn platform_executable_name(base_name: &str) -> String {
 }
 
 fn resolve_bundled_runtime_binary(app: &AppHandle, base_name: &str) -> Option<PathBuf> {
+    // The opt-in P0 harness must exercise the exact release runtime staged under
+    // the isolated app-data directory instead of the development bundle resources.
+    #[cfg(feature = "p0-harness")]
+    let _ = (app, base_name);
+    #[cfg(feature = "p0-harness")]
+    return None;
+
+    #[cfg(not(feature = "p0-harness"))]
+    {
     let resource_dir = app.path().resource_dir().ok()?;
     let candidate = resource_dir
         .join("bin")
@@ -1648,6 +1671,7 @@ fn resolve_bundled_runtime_binary(app: &AppHandle, base_name: &str) -> Option<Pa
         Some(candidate)
     } else {
         None
+    }
     }
 }
 
@@ -1747,16 +1771,17 @@ fn resolve_whisper_model(app: &AppHandle) -> Result<PathBuf, TranscriptionError>
         .join("whisper")
         .join(model.filename);
 
-    if model_path.exists() {
+    if whisper_model_file_looks_valid(&model_path, model.expected_bytes) {
         Ok(model_path)
     } else {
         eprintln!(
-            "Scribe transcription: selected model '{}' is missing at {}",
+            "Scribe transcription: selected model '{}' is missing or invalid at {} size={:?}",
             model.id,
-            model_path.display()
+            model_path.display(),
+            file_size(&model_path)
         );
         Err(TranscriptionError::ModelMissing(
-            "Selected transcription model is not installed.".to_string(),
+            "Selected transcription model is incomplete or invalid. Open Settings → Transcription, remove it, then download it again.".to_string(),
         ))
     }
 }
@@ -3925,6 +3950,24 @@ mod tests {
     }
 
     #[test]
+    fn model_file_validation_rejects_partial_and_non_ggml_files() {
+        let path = std::env::temp_dir().join(format!(
+            "scribe-model-validation-{}-{}.bin",
+            std::process::id(),
+            TEST_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+
+        std::fs::write(&path, b"lmggpartial").expect("write partial model");
+        assert!(!whisper_model_file_looks_valid(&path, Some(100)));
+        assert!(whisper_model_file_looks_valid(&path, None));
+
+        std::fs::write(&path, b"not-a-model").expect("write corrupt model");
+        assert!(!whisper_model_file_looks_valid(&path, None));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn recording_index_upsert_preserves_project_on_retry_without_duplicate_rows() {
         let conn = Connection::open_in_memory().expect("open memory db");
         conn.execute_batch(
@@ -5015,6 +5058,17 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
             );
             return Err("Downloaded model size did not match the expected size".to_string());
         }
+    }
+    if !whisper_model_file_looks_valid(&temp_path, model.expected_bytes) {
+        let _ = std::fs::remove_file(&temp_path);
+        eprintln!(
+            "Scribe model download: model header validation failed model_id={} filename={} downloaded_bytes={} temp_path={} error_category=invalid_model",
+            model.id,
+            model.filename,
+            downloaded,
+            temp_path.display()
+        );
+        return Err("Downloaded file is not a valid Whisper model".to_string());
     }
 
     emit_progress("installing", downloaded, Some(downloaded));

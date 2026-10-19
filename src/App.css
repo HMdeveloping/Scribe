@@ -2959,6 +2959,29 @@ button {
   margin: 0 auto;
 }
 
+.transcription-error-details {
+  margin-top: 16px;
+  color: var(--secondary);
+  font-size: 13px;
+}
+
+.transcription-error-details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.transcription-error-details pre {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--sidebar);
+  color: inherit;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .transcription-error-actions {
   display: flex;
   gap: 12px;

@@ -121,6 +121,64 @@ pub fn run() {
             #[cfg(debug_assertions)]
             write_titlebar_geometry
         ])
-        .run(tauri::generate_context!())
+        .run(app_context())
         .expect("error while running tauri application");
+}
+
+fn app_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
+/// Runs the production Tauri transcription command in a dedicated test app identity.
+/// This is compiled only when explicitly enabled with `--features p0-harness`.
+#[cfg(feature = "p0-harness")]
+pub fn run_p0_transcription_harness() {
+    let recording_id = std::env::var("SCRIBE_P0_RECORDING_ID")
+        .expect("SCRIBE_P0_RECORDING_ID must name an isolated test recording");
+    let run_id = std::env::var("SCRIBE_P0_RUN_ID").unwrap_or_else(|_| "p0-harness-run".into());
+    let exit_code = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
+    let setup_exit_code = exit_code.clone();
+
+    tauri::Builder::default()
+        .setup(move |app| {
+            commands::recordings::initialize_library_on_startup(app.handle());
+            let result = tauri::async_runtime::block_on(commands::recordings::transcribe_recording(
+                app.handle().clone(),
+                recording_id,
+                run_id,
+            ));
+            match result {
+                Ok(transcript) => {
+                    let value = serde_json::to_value(&transcript).unwrap_or_default();
+                    let segment_count = value
+                        .get("segments")
+                        .and_then(serde_json::Value::as_array)
+                        .map_or(0, Vec::len);
+                    let text_chars = value
+                        .get("text")
+                        .and_then(serde_json::Value::as_str)
+                        .map_or(0, |text| text.chars().count());
+                    println!(
+                        "P0_TAURI_RESULT=SUCCESS segments={} text_chars={}",
+                        segment_count,
+                        text_chars
+                    );
+                    setup_exit_code.store(0, std::sync::atomic::Ordering::Release);
+                    app.handle().exit(0);
+                }
+                Err(error) => {
+                    eprintln!("P0_TAURI_RESULT=FAILURE error={error:?}");
+                    setup_exit_code.store(2, std::sync::atomic::Ordering::Release);
+                    app.handle().exit(2);
+                }
+            }
+            Ok(())
+        })
+        .run(app_context())
+        .expect("unable to run isolated Tauri transcription harness");
+
+    let code = exit_code.load(std::sync::atomic::Ordering::Acquire);
+    if code != 0 {
+        std::process::exit(code);
+    }
 }

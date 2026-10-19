@@ -88,6 +88,7 @@ const en = {
   finalizingTranscript: "Finalizing transcript...",
   improvingQuality: "Improving transcription quality",
   transcriptionFailed: "Scribe couldn't transcribe this recording.",
+  transcriptionTechnicalDetails: "Technical details",
   retryTranscription: "Retry transcription",
   continueWithoutTranscript: "Continue without transcript",
   modelNotInstalled: "Whisper model is not installed.",
@@ -312,7 +313,7 @@ const modelChoiceTranslations: Record<AppLanguage, Pick<Dictionary, "recommended
 
 const dictionaries: Record<AppLanguage, Partial<Dictionary>> = {
   en,
-  sl: { ...en,
+  sl: { ...en, transcriptionTechnicalDetails: "Tehnične podrobnosti",
     back: "Nazaj",
     recordings: "Posnetki",
     recordingsAppear: "Vaši posnetki bodo prikazani tukaj.",

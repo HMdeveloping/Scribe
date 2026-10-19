@@ -173,7 +173,11 @@ function ControlledProjectView({ clearRef }) {
 }
 
 await testBackground("ProjectDetailView", (clearRef) => h(ControlledProjectView, { clearRef }), ".library-header > div");
-const projectParentView = await mount(h(ControlledProjectView, { clearRef: createRef() }));
+const projectParentClearRef = createRef();
+const projectParentView = await mount(h(MainContentSelectionBoundary, {
+  className: "main-content",
+  onBackgroundClick: () => projectParentClearRef.current(),
+}, h(ControlledProjectView, { clearRef: projectParentClearRef })));
 await projectParentView.click(projectParentView.host.querySelector(".recording-row-shell .selection-circle"));
 assert.ok(projectParentView.host.querySelector(".recording-row-shell.is-selected"), "ProjectDetail parent test begins with a real selected recording");
 await projectParentView.click(projectParentView.host.querySelector(".library-view"));

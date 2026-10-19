@@ -359,6 +359,7 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
 
 type FinalizingViewProps = {
   errorKind?: "model_missing" | "model_downloading" | "model_ready" | "ffmpeg_missing" | "whisper_missing" | "audio_missing" | "conversion_failed" | "transcript_unavailable" | "transcription";
+  diagnosticCode?: string;
   errorMessage?: string;
   progress?: TranscriptionProgress | null;
   t: TFunction;
@@ -397,7 +398,7 @@ function formatProgressBytes(bytes: number) {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
-export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, onContinue, onOpenTranscriptionSettings, onCancel, retryDisabled = false }: FinalizingViewProps) {
+export function FinalizingView({ errorKind, diagnosticCode, errorMessage, progress, t, onRetry, onContinue, onOpenTranscriptionSettings, onCancel, retryDisabled = false }: FinalizingViewProps) {
   if (errorKind) {
     const title = errorKind === "model_missing"
       ? t("transcriptionModelNotInstalledTitle")
@@ -425,6 +426,12 @@ export function FinalizingView({ errorKind, errorMessage, progress, t, onRetry, 
     return <section className="finalizing-view transcription-error-view" role="status">
       <h1>{title}</h1>
       <p>{copy}</p>
+      {(diagnosticCode || errorMessage) && errorKind !== "model_downloading" ? (
+        <details className="transcription-error-details">
+          <summary>{t("transcriptionTechnicalDetails")}</summary>
+          <pre>{diagnosticCode ? `[${diagnosticCode}] ` : ""}{errorMessage}</pre>
+        </details>
+      ) : null}
       <div className="transcription-error-actions">
         {errorKind === "model_missing" ? (
           <button className="pause-control" onClick={onOpenTranscriptionSettings}>{t("openTranscriptionSettings")}</button>

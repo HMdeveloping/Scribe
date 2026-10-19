@@ -649,6 +649,7 @@ pub fn run_candidate_child(
     cancel: &CancellationToken,
 ) -> Result<ChildResult, String> {
     configure_background_command(&mut command);
+    let started = std::time::Instant::now();
     let mut child = command.spawn().map_err(|e| format!("spawn failed: {e}"))?;
     loop {
         if cancel.is_cancelled() {
@@ -657,6 +658,8 @@ pub fn run_candidate_child(
             return Ok(ChildResult {
                 disposition: ChildDisposition::Cancelled,
                 exit_code: status.code(),
+                termination_signal: termination_signal(&status),
+                elapsed_ms: started.elapsed().as_millis(),
                 used_cpu_fallback: false,
             });
         }
@@ -669,6 +672,8 @@ pub fn run_candidate_child(
                         ChildDisposition::Failed
                     },
                     exit_code: status.code(),
+                    termination_signal: termination_signal(&status),
+                    elapsed_ms: started.elapsed().as_millis(),
                     used_cpu_fallback: false,
                 })
             }
@@ -681,7 +686,20 @@ pub fn run_candidate_child(
 pub struct ChildResult {
     pub disposition: ChildDisposition,
     pub exit_code: Option<i32>,
+    pub termination_signal: Option<i32>,
+    pub elapsed_ms: u128,
     pub used_cpu_fallback: bool,
+}
+
+#[cfg(unix)]
+fn termination_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn termination_signal(_status: &std::process::ExitStatus) -> Option<i32> {
+    None
 }
 
 pub fn candidate_ffmpeg_args(
@@ -784,8 +802,19 @@ impl ChunkInferenceRunner for RealChunkInferenceRunner {
             args.insert(0, "-ng".into());
         }
         let mut command = std::process::Command::new(&self.whisper_cli);
-        command.args(args);
+        command
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
         let result = run_candidate_child(command, cancel).map_err(|_| "child failure")?;
+        eprintln!(
+            "Scribe Whisper process: disposition={:?} exit_code={:?} signal={:?} cpu_fallback={} elapsed_ms={}",
+            result.disposition,
+            result.exit_code,
+            result.termination_signal,
+            cpu || self.gpu_failed,
+            result.elapsed_ms
+        );
         if result.disposition != ChildDisposition::Succeeded {
             if !cpu {
                 self.gpu_failed = true;
@@ -1198,6 +1227,74 @@ pub fn splice_recovery(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn real_runner_retries_signal_crash_with_cpu_and_replaces_partial_json() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let unique = format!(
+            "scribe-c0-fallback-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let output_dir = root.join("out");
+        std::fs::create_dir_all(&output_dir).unwrap();
+        let script = root.join("fake-whisper.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprefix=\"\"\nnext_prefix=0\ncpu=0\nfor arg in \"$@\"; do\n  if [ \"$next_prefix\" -eq 1 ]; then prefix=\"$arg\"; next_prefix=0; continue; fi\n  if [ \"$arg\" = \"-of\" ]; then next_prefix=1; fi\n  if [ \"$arg\" = \"-ng\" ]; then cpu=1; fi\ndone\nprintf '%s\\n' \"$@\" > \"${prefix}.args\"\nif [ \"$cpu\" -eq 0 ]; then\n  printf '{\"segments\":' > \"${prefix}.json\"\n  kill -SEGV $$\nfi\nprintf '{\"segments\":[{\"start\":0,\"end\":0.8,\"text\":\"hello\",\"words\":[{\"text\":\"hello\",\"start\":0,\"end\":0.8}]}]}' > \"${prefix}.json\"\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+
+        let model = root.join("model.bin");
+        let wav = root.join("chunk.wav");
+        std::fs::write(&model, b"dummy").unwrap();
+        std::fs::write(&wav, b"dummy").unwrap();
+        let cancel = std::sync::Arc::new(CancellationToken::default());
+        let mut runner = RealChunkInferenceRunner {
+            whisper_cli: script,
+            model: model.clone(),
+            language: "sl".into(),
+            output_dir: output_dir.clone(),
+            cancel: cancel.clone(),
+            gpu_failed: false,
+        };
+        let core = ChunkCore {
+            index: 0,
+            start_frame: 0,
+            end_frame: SAMPLE_RATE,
+        };
+
+        assert_eq!(runner.run(core, &wav, false, &cancel), Err("whisper failure"));
+        assert!(runner.gpu_failed, "a failed child disables further GPU attempts");
+        let words = runner.run(core, &wav, true, &cancel).expect("CPU retry succeeds");
+        assert_eq!(words, vec![word("hello", 0.0, 0.8)]);
+        let args = std::fs::read_to_string(output_dir.join("chunk-000000.args")).unwrap();
+        let args: Vec<_> = args.lines().collect();
+        assert_eq!(args[0], "-ng", "CPU retry explicitly disables GPU inference");
+        assert_eq!(args[1..5], ["-m", model.to_str().unwrap(), "-f", wav.to_str().unwrap()]);
+        let next_core = ChunkCore { index: 1, ..core };
+        assert_eq!(
+            runner.run(next_core, &wav, false, &cancel).unwrap(),
+            vec![word("hello", 0.0, 0.8)],
+            "once GPU has failed, the next chunk stays on CPU"
+        );
+        let next_args = std::fs::read_to_string(output_dir.join("chunk-000001.args")).unwrap();
+        assert!(next_args.lines().any(|arg| arg == "-ng"));
+        assert_eq!(
+            std::fs::read_to_string(output_dir.join("chunk-000000.json")).unwrap(),
+            r#"{"segments":[{"start":0,"end":0.8,"text":"hello","words":[{"text":"hello","start":0,"end":0.8}]}]}"#
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     fn word(text: &str, start: f64, end: f64) -> Word {
         Word {
             text: text.into(),

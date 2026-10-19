@@ -52,17 +52,12 @@ import { localizedModel, SettingsView, type SettingsViewData, type UpdateProgres
 import { Onboarding } from "./components/Onboarding";
 import { WebviewContextMenuGuard } from "./components/WebviewContextMenuGuard";
 import { useWhisperModelDownloads } from "./hooks/useWhisperModelDownloads";
+import { classifyTranscriptionError } from "./transcription-errors";
+import type { ClassifiedTranscriptionError } from "./transcription-errors";
 import { createTranslator, currentGreetingKey, type AppLanguage, type TranslationKey } from "./i18n";
 import type { Project, RecordingDetails, RecordingSummary } from "./types/library";
 
 const isMicrosoftStoreBuild = import.meta.env.VITE_SCRIBE_CHANNEL === "microsoft-store";
-
-type TranscriptionErrorKind = "model_missing" | "model_downloading" | "model_ready" | "ffmpeg_missing" | "whisper_missing" | "audio_missing" | "conversion_failed" | "transcript_unavailable" | "transcription";
-
-type ClassifiedTranscriptionError = {
-  kind: TranscriptionErrorKind;
-  message?: string;
-};
 
 type UpdaterErrorKind = "network" | "server" | "configuration" | "unknown";
 
@@ -283,24 +278,6 @@ type UpdateDetails = {
 
 function isTopLevelView(viewName: ViewName) {
   return viewName === "home" || viewName === "projects" || viewName === "recordings" || viewName === "settings";
-}
-
-function classifyTranscriptionError(reason: unknown): ClassifiedTranscriptionError {
-  const kind = typeof reason === "object" && reason !== null && "kind" in reason
-    ? String((reason as { kind: unknown }).kind)
-    : "";
-  const message = typeof reason === "object" && reason !== null && "message" in reason
-    ? String((reason as { message: unknown }).message)
-    : undefined;
-
-  if (kind === "model_missing") return { kind: "model_missing", message };
-  if (kind === "model_downloading") return { kind: "model_downloading", message };
-  if (kind === "ffmpeg_missing") return { kind: "ffmpeg_missing", message };
-  if (kind === "whisper_missing") return { kind: "whisper_missing", message };
-  if (kind === "invalid_recording") return { kind: "audio_missing", message };
-  if (kind === "conversion_failed") return { kind: "conversion_failed", message };
-  if (kind === "transcript_unavailable") return { kind: "transcript_unavailable", message };
-  return { kind: "transcription", message };
 }
 
 function recordingTimeValue(value: string) {
@@ -798,7 +775,7 @@ function App() {
     const selectedModel = currentSettings?.models.find((model) => model.id === currentSettings.settings.whisperModel);
     if (!selectedModel) {
       activeTranscriptionRunRef.current = null;
-      setTranscriptionError({ kind: "model_missing" });
+      setTranscriptionError(classifyTranscriptionError({ kind: "model_missing" }));
       return;
     }
     const selectedModelPending = !selectedModel.installed && (
@@ -809,12 +786,12 @@ function App() {
     );
     if (selectedModelPending) {
       activeTranscriptionRunRef.current = null;
-      setTranscriptionError({ kind: "model_downloading", message: t("modelDownloadingFriendly") });
+      setTranscriptionError(classifyTranscriptionError({ kind: "model_downloading", message: t("modelDownloadingFriendly") }));
       return;
     }
     if (!selectedModel.installed) {
       activeTranscriptionRunRef.current = null;
-      setTranscriptionError({ kind: "model_missing" });
+      setTranscriptionError(classifyTranscriptionError({ kind: "model_missing" }));
       return;
     }
     try {
@@ -1262,7 +1239,7 @@ function App() {
 
   useEffect(() => {
     if (transcriptionError?.kind === "model_downloading" && selectedTranscriptionModel?.installed) {
-      setTranscriptionError({ kind: "model_ready" });
+      setTranscriptionError(classifyTranscriptionError({ kind: "model_ready" }));
     }
   }, [selectedTranscriptionModel?.installed, transcriptionError?.kind]);
 
@@ -1413,6 +1390,7 @@ function App() {
       }}>
         {finalizing ? <FinalizingView
           errorKind={transcriptionError?.kind}
+          diagnosticCode={transcriptionError?.diagnosticCode}
           errorMessage={transcriptionError?.message}
           progress={finalizingProgress}
           t={t}
