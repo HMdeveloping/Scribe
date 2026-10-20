@@ -44,6 +44,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
+      - name: Install frontend dependencies
+        run: npm ci
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify release runtime policy
         run: node scripts/verify-release-config.mjs
