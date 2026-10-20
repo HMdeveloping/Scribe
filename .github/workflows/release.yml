@@ -55,6 +55,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify release tag targets the built commit
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true
+        shell: bash
+        env:
+          TAG_NAME: ${{ inputs.tag }}
+          EXPECTED_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag_sha="$(gh api "repos/$GH_REPO/git/ref/tags/$TAG_NAME" --jq '.object.sha' 2>/dev/null || true)"
+          if [ -z "$tag_sha" ]; then
+            echo "Release tag $TAG_NAME must exist and point to the verified workflow commit $EXPECTED_SHA before publication."
+            exit 1
+          fi
+          if [ "$tag_sha" != "$EXPECTED_SHA" ]; then
+            echo "Release tag $TAG_NAME points to $tag_sha, expected $EXPECTED_SHA."
+            exit 1
+          fi
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -533,19 +553,20 @@ jobs:
         run: |
           set -euo pipefail
           cat > release-notes.md <<'EOF'
-          Scribe v1.0.0 — Official V1
+          Scribe v1.0.1
 
-          Official V1 release for direct macOS and Windows distribution.
+          This release improves transcription reliability and platform runtime compatibility.
 
           Highlights:
-          - local recording and transcription
-          - Whisper Large v3 Turbo and Large v3 models
-          - Import Audio, Projects, and Recordings
-          - clickable timestamped transcript words and synchronized navigation
-          - local model management and multilingual UI
-          - local-first processing for direct macOS and Windows distribution
+          - Improved Apple Silicon Whisper runtime portability.
+          - Fixed transcription execution failures affecting Apple M1.
+          - Improved microphone recording lifecycle and recovery.
+          - Preserved captured audio after microphone interruption.
+          - Retained automatic GPU-to-CPU fallback.
+          - Improved transcription error handling and privacy-safe diagnostics.
+          - Improved Windows x64 runtime compatibility.
 
-          Microsoft Store availability is separate and is not included in this release.
+          Hardware validation is limited to the devices and workflows reported by the owner. The macOS application is ad-hoc signed and is not Apple-notarized.
           EOF
           release_flags=(--title "Scribe $TAG_NAME" --notes-file release-notes.md)
           if [[ "$TAG_NAME" == *-* ]]; then
