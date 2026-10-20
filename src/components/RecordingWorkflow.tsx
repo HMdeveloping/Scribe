@@ -6,6 +6,7 @@ import { BackButton } from "./BackButton";
 import { useAudioPlayer } from "../hooks/useAudioPlayer";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { useMicrophoneLevel } from "../hooks/useMicrophoneLevel";
+import { getMicrophoneDiagnostics, recordMicrophoneDiagnostic } from "../microphone-diagnostics";
 import type { TFunction } from "../i18n";
 import type { AppLanguage } from "../i18n";
 import type { ContextMenuAction } from "./ContextMenu";
@@ -67,7 +68,7 @@ type SaveRecordingResult = {
   };
 };
 
-type RecordingPhase = "preparing" | "recording" | "paused" | "stopping" | "save-error" | "too-short" | "discarding";
+type RecordingPhase = "preparing" | "recording" | "paused" | "capture-error" | "stopping" | "save-error" | "too-short" | "discarding";
 
 export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, projectId }: { onStop: (metadata: RecordingMetadata) => void; onSaved: (details: SaveRecordingResult["details"]) => void; onDiscard: () => void; onStartNew: () => void; t: TFunction; projectId?: string | null }) {
   const [phase, setPhase] = useState<RecordingPhase>("preparing");
@@ -79,14 +80,16 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
   const isSaveError = phase === "save-error";
   const isTooShort = phase === "too-short";
   const isPreparing = phase === "preparing";
+  const isCaptureError = phase === "capture-error";
   const isCaptureActive = phase === "preparing" || phase === "recording" || phase === "paused";
   const microphone = useMicrophoneLevel(isPaused || !isCaptureActive);
-  const recorder = useAudioRecorder(microphone.stream, isPaused || !isCaptureActive);
+  const recorder = useAudioRecorder(microphone.stream, isPaused, microphone.sessionId);
   const accumulatedElapsedMs = useRef(0);
   const startedAtMs = useRef<number | null>(null);
   const stopStarted = useRef(false);
   const mountedRef = useRef(true);
   const sessionTokenRef = useRef(0);
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -113,6 +116,18 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
     if (phase !== "preparing" || recorder.status !== "recording") return;
     setPhase("recording");
   }, [phase, recorder.status]);
+
+  useEffect(() => {
+    if (!isCaptureActive) return;
+    if (microphone.status === "error" || recorder.status === "error" || recorder.status === "stopped") {
+      stopStarted.current = false;
+      recordMicrophoneDiagnostic(microphone.sessionId, "recording_view_interrupted", {
+        microphoneStatus: microphone.status,
+        recorderStatus: recorder.status,
+      });
+      setPhase("capture-error");
+    }
+  }, [isCaptureActive, microphone.status, microphone.sessionId, recorder.status]);
 
   useEffect(() => {
     if (phase !== "recording") return;
@@ -176,15 +191,13 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
         metadata,
         projectId: projectId ?? null,
       });
-      console.info("[recording-save] invoke success", result);
-      console.info("Scribe: saved recording", result);
+      console.info("[recording-save] invoke success");
       onSaved(result.details);
     } catch (reason) {
-      console.error("[recording-save] invoke error", reason);
       console.error("Scribe: Tauri save_recording failed", {
         recordingId: metadata.id,
         bytes: audioBytes.length,
-        reason,
+        category: reason instanceof Error ? reason.name : "save_recording_failed",
       });
       throw reason;
     }
@@ -192,7 +205,7 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
 
   async function stopAndSave() {
     if (stopStarted.current) return;
-    if (recorder.status !== "recording" && recorder.status !== "paused") {
+    if (!isCaptureError && recorder.status !== "recording" && recorder.status !== "paused" && recorder.status !== "error" && recorder.status !== "stopped") {
       console.warn("[recording-lifecycle] stop_requested_before_recorder_ready", {
         recorderStatus: recorder.status,
         microphoneStatus: microphone.status,
@@ -236,10 +249,52 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
       setPendingSave(null);
       onStop(metadata);
     } catch (reason) {
-      console.error("Scribe: failed to save recording", reason);
+      console.error("Scribe: failed to save recording", { category: reason instanceof Error ? reason.name : "save_failed" });
       microphone.stop();
       if (!mountedRef.current || sessionToken !== sessionTokenRef.current) return;
       setPhase("save-error");
+    }
+  }
+
+  async function retryInterruptedCapture() {
+    if (stopStarted.current || !isCaptureError) return;
+    stopStarted.current = true;
+    const sessionToken = sessionTokenRef.current;
+    setPhase("stopping");
+    const finalElapsedMs = snapshotElapsedMs();
+    try {
+      const blob = await recorder.stop();
+      microphone.stop();
+      if (blob.size > 0) {
+        const metadata: RecordingMetadata = {
+          version: 1,
+          id: crypto.randomUUID(),
+          title: t("newRecordingTitle"),
+          createdAt: new Date().toISOString(),
+          durationSeconds: Math.max(0, Math.round(finalElapsedMs / 1000)),
+          language: "sl",
+          audioFile: "audio.webm",
+          mimeType: blob.type || recorder.mimeType || "audio/webm",
+        };
+        setPendingSave({ blob, metadata });
+        await saveRecording(blob, metadata);
+      }
+      if (!mountedRef.current || sessionToken !== sessionTokenRef.current) return;
+      setPendingSave(null);
+      onStartNew();
+    } catch {
+      microphone.stop();
+      if (!mountedRef.current || sessionToken !== sessionTokenRef.current) return;
+      setPhase("save-error");
+    }
+  }
+
+  async function copyMicrophoneDiagnostics() {
+    try {
+      await navigator.clipboard.writeText(getMicrophoneDiagnostics(microphone.sessionId));
+      setDiagnosticsCopied(true);
+    } catch {
+      setDiagnosticsCopied(false);
     }
   }
 
@@ -252,7 +307,7 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
       setPendingSave(null);
       onStop(pendingSave.metadata);
     } catch (reason) {
-      console.error("Scribe: failed to save recording on retry", reason);
+      console.error("Scribe: failed to save recording on retry", { category: reason instanceof Error ? reason.name : "save_failed" });
       if (!mountedRef.current) return;
       setPhase("save-error");
     }
@@ -301,6 +356,17 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
           {t("tryAgain")}
         </button>
       ) : null}
+      {isCaptureError ? (
+        <div className="recording-recovery-controls">
+          <p>{t("microphoneRecoveryHelp")}</p>
+          <button className="stop-control" onClick={() => void stopAndSave()}>{t("saveCapturedAudio")}</button>
+          <button className="retry-save-control" onClick={() => void retryInterruptedCapture()}>{t("tryAgain")}</button>
+          <button className="discard-control" onClick={requestDiscard}>{t("discard")}</button>
+          <button className="pause-control" onClick={() => void copyMicrophoneDiagnostics()}>
+            {diagnosticsCopied ? t("microphoneDiagnosticsCopied") : t("copyMicrophoneDiagnostics")}
+          </button>
+        </div>
+      ) : null}
       {isTooShort ? (
         <button className="retry-save-control" onClick={onStartNew}>
           {t("startNewRecording")}
@@ -310,9 +376,6 @@ export function RecordingView({ onStop, onSaved, onDiscard, onStartNew, t, proje
         <h2>{t("liveTranscript")} <span className="soon-badge">{t("soon")}</span></h2>
         <p>{t("liveTranscriptPlaceholder")}</p>
       </div>
-      {microphone.status === "error" ? (
-        <button className="retry-save-control" onClick={onStartNew}>{t("tryAgain")}</button>
-      ) : null}
       {isCaptureActive ? (
         <div className="recording-controls">
           <button className="pause-control" disabled={recorder.status !== "recording" && recorder.status !== "paused"} onClick={() => {
@@ -399,6 +462,16 @@ function formatProgressBytes(bytes: number) {
 }
 
 export function FinalizingView({ errorKind, diagnosticCode, errorMessage, progress, t, onRetry, onContinue, onOpenTranscriptionSettings, onCancel, retryDisabled = false }: FinalizingViewProps) {
+  const [technicalDetailsCopied, setTechnicalDetailsCopied] = useState(false);
+  const copyTechnicalDetails = async (details: string) => {
+    if (!navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(details);
+      setTechnicalDetailsCopied(true);
+    } catch {
+      setTechnicalDetailsCopied(false);
+    }
+  };
   if (errorKind) {
     const title = errorKind === "model_missing"
       ? t("transcriptionModelNotInstalledTitle")
@@ -430,6 +503,10 @@ export function FinalizingView({ errorKind, diagnosticCode, errorMessage, progre
         <details className="transcription-error-details">
           <summary>{t("transcriptionTechnicalDetails")}</summary>
           <pre>{diagnosticCode ? `[${diagnosticCode}] ` : ""}{errorMessage}</pre>
+          <button className="pause-control" onClick={() => void copyTechnicalDetails(`${diagnosticCode ? `[${diagnosticCode}] ` : ""}${errorMessage ?? ""}`)}>
+            {technicalDetailsCopied ? t("technicalDetailsCopied") : t("copyTechnicalDetails")}
+          </button>
+          <p>{t("whisperCrashReportInstructions")}</p>
         </details>
       ) : null}
       <div className="transcription-error-actions">

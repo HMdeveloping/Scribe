@@ -11,6 +11,13 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
+macro_rules! release_debug_log {
+    ($($argument:tt)*) => {{
+        #[cfg(debug_assertions)]
+        eprintln!($($argument)*);
+    }};
+}
+
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -253,6 +260,7 @@ struct LoadedSettings {
     settings_file_existed: bool,
     onboarding_flag_present: bool,
     app_language_present: bool,
+    legacy_cpu_preference_present: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -467,7 +475,7 @@ fn ffmpeg_decode_duration_seconds(ffmpeg: &Path, audio_path: &Path) -> Result<u6
         .output()
         .map_err(|error| format!("Unable to decode audio duration: {error}"))?;
     if !output.status.success() {
-        eprintln!(
+        release_debug_log!(
             "Scribe import: FFmpeg duration decode failed: {}",
             summarize_process_output(&output.stderr)
         );
@@ -510,7 +518,7 @@ fn probe_import_duration_seconds(app: &AppHandle, audio_path: &Path) -> Result<u
             }
         }
     } else {
-        eprintln!(
+        release_debug_log!(
             "Scribe import: ffprobe duration failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
@@ -718,7 +726,7 @@ fn migrate_database(app: &AppHandle, conn: &Connection) -> Result<(), String> {
         .map_err(|error| format!("Unable to read database version: {error}"))?;
 
     if let Err(error) = backup_database(app) {
-        eprintln!("Scribe library: database backup skipped: {error}");
+        release_debug_log!("Scribe library: database backup skipped: {error}");
     }
 
     conn.execute_batch(
@@ -879,19 +887,19 @@ fn import_existing_recordings(app: &AppHandle, conn: &Connection) -> Result<(), 
         let metadata_json = match std::fs::read_to_string(&metadata_path) {
             Ok(value) => value,
             Err(error) => {
-                eprintln!("Scribe library: skipping recording without readable metadata: {error}");
+                release_debug_log!("Scribe library: skipping recording without readable metadata: {error}");
                 continue;
             }
         };
         let metadata: RecordingMetadata = match serde_json::from_str(&metadata_json) {
             Ok(value) => value,
             Err(error) => {
-                eprintln!("Scribe library: skipping recording with invalid metadata: {error}");
+                release_debug_log!("Scribe library: skipping recording with invalid metadata: {error}");
                 continue;
             }
         };
         if metadata.id != recording_id {
-            eprintln!("Scribe library: skipping recording with mismatched metadata id");
+            release_debug_log!("Scribe library: skipping recording with mismatched metadata id");
             continue;
         }
 
@@ -913,7 +921,7 @@ fn import_existing_recordings(app: &AppHandle, conn: &Connection) -> Result<(), 
 
 pub fn initialize_library_on_startup(app: &AppHandle) {
     if let Err(error) = open_database(app) {
-        eprintln!("Scribe library: startup initialization failed: {error}");
+        release_debug_log!("Scribe library: startup initialization failed: {error}");
     }
 }
 
@@ -1064,6 +1072,12 @@ fn default_settings() -> ScribeSettings {
     }
 }
 
+fn discard_legacy_cpu_only_preference(settings: &mut ScribeSettings) -> bool {
+    let had_camel_case = settings.extra.remove("cpuOnlyTranscription").is_some();
+    let had_snake_case = settings.extra.remove("cpu_only_transcription").is_some();
+    had_camel_case || had_snake_case
+}
+
 fn default_settings_version() -> u8 {
     1
 }
@@ -1129,6 +1143,7 @@ fn load_settings(app: &AppHandle) -> LoadedSettings {
         settings_file_existed: false,
         onboarding_flag_present: false,
         app_language_present: false,
+        legacy_cpu_preference_present: false,
     };
     let Ok(path) = settings_path(app) else {
         return fallback();
@@ -1160,11 +1175,14 @@ fn load_settings(app: &AppHandle) -> LoadedSettings {
             settings_file_existed,
             onboarding_flag_present,
             app_language_present,
+            legacy_cpu_preference_present: false,
         };
     };
 
+    let legacy_cpu_preference_present = discard_legacy_cpu_only_preference(&mut settings);
+
     if model_definition(&settings.whisper_model).is_none() {
-        eprintln!(
+        release_debug_log!(
             "Scribe settings: unsupported persisted Whisper model id '{}'; selecting a supported installed model",
             settings.whisper_model
         );
@@ -1199,6 +1217,7 @@ fn load_settings(app: &AppHandle) -> LoadedSettings {
         settings_file_existed,
         onboarding_flag_present,
         app_language_present,
+        legacy_cpu_preference_present,
     }
 }
 
@@ -1208,9 +1227,10 @@ fn load_or_create_settings(app: &AppHandle) -> ScribeSettings {
     if !loaded.settings_file_existed
         || (loaded.settings_file_existed && !loaded.onboarding_flag_present)
         || (loaded.settings_file_existed && !loaded.app_language_present)
+        || loaded.legacy_cpu_preference_present
     {
         if let Err(error) = save_settings_file(app, &settings) {
-            eprintln!("Scribe settings: unable to persist settings: {error}");
+            release_debug_log!("Scribe settings: unable to persist settings: {error}");
         }
     }
     settings
@@ -1506,7 +1526,8 @@ fn append_transcription_diagnostic(app: &AppHandle, recording_id: &str, line: im
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let timestamped_line = format!("timestamp={} {}", unix_timestamp_seconds(), line.as_ref());
+    let safe_line = crate::transcription_runtime::sanitize_diagnostic_message(line.as_ref());
+    let timestamped_line = format!("timestamp={} {}", unix_timestamp_seconds(), safe_line);
     for path in [
         Some(path),
         latest_transcription_history_path(app, recording_id),
@@ -1517,40 +1538,6 @@ fn append_transcription_diagnostic(app: &AppHandle, recording_id: &str, line: im
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
             let _ = writeln!(file, "{}", timestamped_line);
         }
-    }
-}
-
-fn preserve_forensic_json(app: &AppHandle, recording_id: &str, suffix: &str, source: &Path) {
-    let Some(dir) = diagnostics_dir(app).ok() else {
-        return;
-    };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let timestamp = unix_timestamp_seconds();
-    let destination = dir.join(format!(
-        "transcription-{}-{}-{}.json",
-        timestamp,
-        safe_diagnostic_recording_id(recording_id),
-        suffix
-    ));
-    let _ = std::fs::copy(source, destination);
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return;
-    };
-    let mut artifacts = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("transcription-") && name.ends_with(".json"))
-        })
-        .collect::<Vec<_>>();
-    artifacts.sort();
-    let remove_count = artifacts.len().saturating_sub(20);
-    for path in artifacts.into_iter().take(remove_count) {
-        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -1662,16 +1649,16 @@ fn resolve_bundled_runtime_binary(app: &AppHandle, base_name: &str) -> Option<Pa
 
     #[cfg(not(feature = "p0-harness"))]
     {
-    let resource_dir = app.path().resource_dir().ok()?;
-    let candidate = resource_dir
-        .join("bin")
-        .join(runtime_target_triple())
-        .join(platform_executable_name(base_name));
-    if candidate.exists() {
-        Some(candidate)
-    } else {
-        None
-    }
+        let resource_dir = app.path().resource_dir().ok()?;
+        let candidate = resource_dir
+            .join("bin")
+            .join(runtime_target_triple())
+            .join(platform_executable_name(base_name));
+        if candidate.exists() {
+            Some(candidate)
+        } else {
+            None
+        }
     }
 }
 
@@ -1697,7 +1684,7 @@ fn resolve_runtime_binary(
     error: impl FnOnce() -> TranscriptionError,
 ) -> Result<PathBuf, TranscriptionError> {
     if let Some(candidate) = resolve_bundled_runtime_binary(app, base_name) {
-        eprintln!(
+        release_debug_log!(
             "Scribe runtime: probing bundled {base_name} at {} exists={} executable={}",
             candidate.display(),
             candidate.exists(),
@@ -1709,7 +1696,7 @@ fn resolve_runtime_binary(
     }
 
     if let Some(candidate) = resolve_app_data_runtime_binary(app, app_data_folder, base_name) {
-        eprintln!(
+        release_debug_log!(
             "Scribe runtime: probing app-data {base_name} at {} exists={} executable={}",
             candidate.display(),
             candidate.exists(),
@@ -1723,7 +1710,7 @@ fn resolve_runtime_binary(
     if allow_path_runtime_fallback()
         && path_command_works(&platform_executable_name(base_name), probe_arg)
     {
-        eprintln!("Scribe runtime: using PATH fallback for {base_name}");
+        release_debug_log!("Scribe runtime: using PATH fallback for {base_name}");
         return Ok(PathBuf::from(platform_executable_name(base_name)));
     }
 
@@ -1757,7 +1744,7 @@ fn resolve_whisper_cli(app: &AppHandle) -> Result<PathBuf, TranscriptionError> {
 fn resolve_whisper_model(app: &AppHandle) -> Result<PathBuf, TranscriptionError> {
     let settings = load_or_create_settings(app);
     let model = model_definition(&settings.whisper_model).ok_or_else(|| {
-        eprintln!(
+        release_debug_log!(
             "Scribe transcription: selected model id '{}' is unknown",
             settings.whisper_model
         );
@@ -1774,7 +1761,7 @@ fn resolve_whisper_model(app: &AppHandle) -> Result<PathBuf, TranscriptionError>
     if whisper_model_file_looks_valid(&model_path, model.expected_bytes) {
         Ok(model_path)
     } else {
-        eprintln!(
+        release_debug_log!(
             "Scribe transcription: selected model '{}' is missing or invalid at {} size={:?}",
             model.id,
             model_path.display(),
@@ -2720,13 +2707,6 @@ fn recover_decoder_loops(
             Err(_) => Vec::new(),
         };
 
-        preserve_forensic_json(
-            context.app,
-            context.model_id,
-            "recovery-whisper",
-            &retry_json,
-        );
-
         let _ = std::fs::remove_file(&retry_wav);
         let _ = std::fs::remove_file(&retry_json);
 
@@ -2744,7 +2724,7 @@ fn recover_decoder_loops(
             continue;
         }
 
-        eprintln!(
+        release_debug_log!(
             "Scribe transcription: decoder loop recovered model_id={} start={:.3} end={:.3} replacement_segments={}",
             context.model_id,
             candidate.start_time,
@@ -2950,6 +2930,7 @@ fn run_production_c0(
     run_id: &str,
     diagnostics: Option<&crate::transcription_runtime::ProductionC0DiagnosticSink>,
     cancel: crate::transcription_chunking::CancellationHandle,
+    model_id: &str,
 ) -> Result<(), TranscriptionError> {
     struct C0WorkCleanup(PathBuf);
     impl Drop for C0WorkCleanup {
@@ -2984,6 +2965,10 @@ fn run_production_c0(
         output_dir: work_dir.join("whisper"),
         cancel: cancel.clone(),
         gpu_failed: false,
+        model_id: model_id.to_string(),
+        model_size_bytes: file_size(&context.model_path),
+        last_failure_detail: None,
+        prior_auto_failure_detail: None,
     };
     std::fs::create_dir_all(&extractor.output_dir)
         .map_err(|error| TranscriptionError::Io(error.to_string()))?;
@@ -3015,8 +3000,10 @@ fn run_production_c0(
                 ("extraction", "success", _) => "CHUNK_EXTRACTION_SUCCEEDED",
                 ("whisper", "start", Some("normal")) => "PRIMARY_INFERENCE_STARTED",
                 ("whisper", "success", Some("normal")) => "PRIMARY_INFERENCE_SUCCEEDED",
+                ("whisper", "failure", Some("normal")) => "PRIMARY_INFERENCE_FAILED",
                 ("whisper", "start", Some("cpu_fallback")) => "CPU_FALLBACK_STARTED",
                 ("whisper", "success", Some("cpu_fallback")) => "CPU_FALLBACK_SUCCEEDED",
+                ("whisper", "failure", Some("cpu_fallback")) => "CPU_FALLBACK_FAILED",
                 ("owner_remap", "success", _) => "OWNER_REMAP_COMPLETED",
                 ("merge", "success", _) => "PRIMARY_MERGE_COMPLETED",
                 ("merge", "failure", _) => "MERGE_FAILURE",
@@ -3033,6 +3020,9 @@ fn run_production_c0(
                 diagnostic.owned_word_count = event.word_count;
             }
             diagnostic.conflict = event.conflict.clone();
+            if event.stage == "whisper" && event.outcome == "failure" {
+                diagnostic.error_category = Some("whisper_process_failure".into());
+            }
             sink.emit(diagnostic);
             if event.stage == "whisper" && event.outcome == "success" {
                 let mut parsed = sink.event("PARSER_COMPLETED");
@@ -3047,24 +3037,28 @@ fn run_production_c0(
     if let Some(sink) = diagnostics {
         sink.emit(sink.event("MERGE_STARTED"));
     }
-    let merged = crate::transcription_chunking::orchestrate_primary_observed(
+    let merged_result = crate::transcription_chunking::orchestrate_primary_observed(
         source,
         &mut extractor,
         &mut inference,
         &cancel,
         &mut observer,
-    )
-    .map_err(|error| {
+    );
+    let safe_detail = inference
+        .last_failure_detail
+        .clone()
+        .unwrap_or_else(|| "diagnostic_detail=unavailable".to_string());
+    let merged = merged_result.map_err(|error| {
         if let Some(sink) = diagnostics {
             let mut event = sink.event("MERGE_FAILURE");
             event.error_category = Some("post_chunk_orchestration".into());
-            event.error_message = Some(error.to_string());
+            event.error_message = Some(format!("{error}; {safe_detail}"));
             sink.emit(event);
         }
         if error == "cancelled" {
             TranscriptionError::Cancelled
         } else {
-            TranscriptionError::WhisperFailed(error.to_string())
+            TranscriptionError::WhisperFailed(format!("{error}; {safe_detail}"))
         }
     })?;
     if let Some(sink) = diagnostics {
@@ -4093,7 +4087,7 @@ pub fn save_recording(
     }) {
         Ok(()) => {}
         Err(error) => {
-            eprintln!(
+            release_debug_log!(
                 "Scribe library: recording {} was saved to disk but indexing failed: {error}",
                 recording_id
             );
@@ -4145,7 +4139,7 @@ fn import_audio_recording_blocking(
     if !is_supported_import_extension(&extension) {
         return Err("Unsupported audio file type".to_string());
     }
-    eprintln!(
+    release_debug_log!(
         "Scribe import: starting import_id={} source_path={} extension={} source_exists={} source_size={:?}",
         import_id,
         source.display(),
@@ -4163,7 +4157,7 @@ fn import_audio_recording_blocking(
         .map_err(|error| format!("Unable to create recording directory: {error}"))?;
     let audio_path = recording_dir.join(&audio_file);
     copy_with_progress(&app, &import_id, &recording_id, &source, &audio_path)?;
-    eprintln!(
+    release_debug_log!(
         "Scribe import: copied import_id={} recording_id={} audio_path={} audio_exists={} audio_size={:?}",
         import_id,
         recording_id,
@@ -4174,14 +4168,14 @@ fn import_audio_recording_blocking(
     let duration_seconds = match probe_import_duration_seconds(&app, &audio_path) {
         Ok(seconds) => seconds,
         Err(error) => {
-            eprintln!(
+            release_debug_log!(
                 "Scribe import: copied audio could not be probed at {}: {error}",
                 audio_path.display()
             );
             0
         }
     };
-    eprintln!(
+    release_debug_log!(
         "Scribe import: duration probed import_id={} recording_id={} duration_seconds={}",
         import_id, recording_id, duration_seconds
     );
@@ -4333,8 +4327,8 @@ pub fn delete_projects(
     app: AppHandle,
     project_ids: Vec<String>,
 ) -> Result<DeleteProjectsResult, String> {
-    eprintln!("[project-delete-rust] COMMAND ENTERED");
-    eprintln!("[project-delete-rust] ids: {:?}", project_ids);
+    release_debug_log!("[project-delete-rust] COMMAND ENTERED");
+    release_debug_log!("[project-delete-rust] ids: {:?}", project_ids);
     if project_ids.is_empty() {
         return Err("No projects selected".to_string());
     }
@@ -4352,21 +4346,21 @@ pub fn delete_projects(
     let mut cleared_recording_count = 0usize;
 
     for project_id in project_ids {
-        eprintln!("[project-delete-rust] sqlite clear recording projects start: {project_id}");
+        release_debug_log!("[project-delete-rust] sqlite clear recording projects start: {project_id}");
         let cleared = tx
             .execute(
                 "UPDATE recordings SET project_id = NULL, updated_at = ?1 WHERE project_id = ?2",
                 params![now_text(), project_id],
             )
             .map_err(|error| format!("Unable to detach project recordings: {error}"))?;
-        eprintln!("[project-delete-rust] recordings preserved: {cleared}");
+        release_debug_log!("[project-delete-rust] recordings preserved: {cleared}");
         cleared_recording_count += cleared;
 
-        eprintln!("[project-delete-rust] sqlite delete start: {project_id}");
+        release_debug_log!("[project-delete-rust] sqlite delete start: {project_id}");
         let changed = tx
             .execute("DELETE FROM projects WHERE id = ?1", params![project_id])
             .map_err(|error| format!("Unable to delete project: {error}"))?;
-        eprintln!("[project-delete-rust] affected rows: {changed}");
+        release_debug_log!("[project-delete-rust] affected rows: {changed}");
         if changed == 0 {
             return Err("Project was not found".to_string());
         }
@@ -4386,11 +4380,11 @@ pub fn delete_projects(
                 |row| row.get(0),
             )
             .map_err(|error| format!("Unable to verify detached recordings: {error}"))?;
-        eprintln!(
+        release_debug_log!(
             "[project-delete-rust] verify projects absent: {}",
             project_exists.is_none()
         );
-        eprintln!(
+        release_debug_log!(
             "[project-delete-rust] verify recordings preserved/detached: {}",
             attached_recordings == 0
         );
@@ -4402,7 +4396,7 @@ pub fn delete_projects(
 
     tx.commit()
         .map_err(|error| format!("Unable to finish deleting projects: {error}"))?;
-    eprintln!("[project-delete-rust] success");
+    release_debug_log!("[project-delete-rust] success");
     Ok(DeleteProjectsResult {
         deleted_ids,
         cleared_recording_count,
@@ -4529,14 +4523,14 @@ pub fn delete_recordings(
     app: AppHandle,
     recording_ids: Vec<String>,
 ) -> Result<DeleteRecordingsResult, String> {
-    eprintln!("[delete-rust] COMMAND ENTERED");
-    eprintln!("[delete-rust] ids received: {:?}", recording_ids);
+    release_debug_log!("[delete-rust] COMMAND ENTERED");
+    release_debug_log!("[delete-rust] ids received: {:?}", recording_ids);
     for recording_id in &recording_ids {
-        eprintln!("[delete-rust] validating ID: {recording_id}");
+        release_debug_log!("[delete-rust] validating ID: {recording_id}");
     }
     validate_recording_ids(&recording_ids)?;
     let recordings_root = app_data_dir(&app)?.join("recordings");
-    eprintln!(
+    release_debug_log!(
         "[delete-rust] recordings root: {}",
         recordings_root.display()
     );
@@ -4555,7 +4549,7 @@ pub fn delete_recordings(
         {
             Ok(value) => value,
             Err(error) => {
-                eprintln!("Scribe library: unable to verify recording {recording_id}: {error}");
+                release_debug_log!("Scribe library: unable to verify recording {recording_id}: {error}");
                 failed.push(BulkRecordingFailure {
                     id: recording_id,
                     error: format!("Unable to verify recording index: {error}"),
@@ -4564,7 +4558,7 @@ pub fn delete_recordings(
             }
         };
         if exists.is_none() {
-            eprintln!("Scribe library: recording {recording_id} was not found in SQLite");
+            release_debug_log!("Scribe library: recording {recording_id} was not found in SQLite");
             failed.push(BulkRecordingFailure {
                 id: recording_id,
                 error: "Recording was not found".to_string(),
@@ -4573,10 +4567,10 @@ pub fn delete_recordings(
         }
 
         let recording_dir = recordings_root.join(&recording_id);
-        eprintln!("[delete-rust] resolved target: {}", recording_dir.display());
-        eprintln!("[delete-rust] exists: {}", recording_dir.exists());
+        release_debug_log!("[delete-rust] resolved target: {}", recording_dir.display());
+        release_debug_log!("[delete-rust] exists: {}", recording_dir.exists());
         if recording_dir == recordings_root || !recording_dir.starts_with(&recordings_root) {
-            eprintln!("Scribe library: refused unsafe delete path for {recording_id}");
+            release_debug_log!("Scribe library: refused unsafe delete path for {recording_id}");
             failed.push(BulkRecordingFailure {
                 id: recording_id,
                 error: "Resolved path escaped recordings directory".to_string(),
@@ -4584,29 +4578,29 @@ pub fn delete_recordings(
             continue;
         }
 
-        eprintln!("[delete-rust] remove_dir_all start");
+        release_debug_log!("[delete-rust] remove_dir_all start");
         if let Err(error) = std::fs::remove_dir_all(&recording_dir) {
             if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("[delete-rust] remove_dir_all error: {error}");
-                eprintln!("Scribe library: filesystem delete failed for {recording_id}: {error}");
+                release_debug_log!("[delete-rust] remove_dir_all error: {error}");
+                release_debug_log!("Scribe library: filesystem delete failed for {recording_id}: {error}");
                 failed.push(BulkRecordingFailure {
                     id: recording_id,
                     error: format!("Unable to delete recording files: {error}"),
                 });
                 continue;
             }
-            eprintln!("Scribe library: recording directory already missing for {recording_id}");
+            release_debug_log!("Scribe library: recording directory already missing for {recording_id}");
         } else {
-            eprintln!("[delete-rust] remove_dir_all done");
+            release_debug_log!("[delete-rust] remove_dir_all done");
         }
 
-        eprintln!("[delete-rust] sqlite delete start");
+        release_debug_log!("[delete-rust] sqlite delete start");
         match conn.execute(
             "DELETE FROM recordings WHERE id = ?1",
             params![recording_id],
         ) {
             Ok(changed) if changed > 0 => {
-                eprintln!("[delete-rust] sqlite affected rows: {changed}");
+                release_debug_log!("[delete-rust] sqlite affected rows: {changed}");
                 let row_after_delete: Option<String> = conn
                     .query_row(
                         "SELECT id FROM recordings WHERE id = ?1",
@@ -4617,19 +4611,19 @@ pub fn delete_recordings(
                     .map_err(|error| {
                         format!("Unable to verify deleted recording index: {error}")
                     })?;
-                eprintln!(
+                release_debug_log!(
                     "[delete-rust] verify path absent: {}",
                     !recording_dir.exists()
                 );
-                eprintln!(
+                release_debug_log!(
                     "[delete-rust] verify db row absent: {}",
                     row_after_delete.is_none()
                 );
-                eprintln!(
+                release_debug_log!(
                     "[delete] target exists after delete: {}",
                     recording_dir.exists()
                 );
-                eprintln!(
+                release_debug_log!(
                     "[delete] sqlite row exists after delete: {}",
                     row_after_delete.is_some()
                 );
@@ -4644,21 +4638,21 @@ pub fn delete_recordings(
                         error: "Recording index still exists after delete".to_string(),
                     });
                 } else {
-                    eprintln!("[delete-rust] success");
+                    release_debug_log!("[delete-rust] success");
                     deleted_ids.push(recording_id);
                 }
             }
             Ok(_) => {
-                eprintln!("[delete-rust] sqlite affected rows: 0");
-                eprintln!("Scribe library: SQLite delete changed no rows for {recording_id}");
+                release_debug_log!("[delete-rust] sqlite affected rows: 0");
+                release_debug_log!("Scribe library: SQLite delete changed no rows for {recording_id}");
                 failed.push(BulkRecordingFailure {
                     id: recording_id,
                     error: "Recording index was not deleted".to_string(),
                 });
             }
             Err(error) => {
-                eprintln!("[delete-rust] sqlite delete error: {error}");
-                eprintln!("Scribe library: SQLite delete failed for {recording_id}: {error}");
+                release_debug_log!("[delete-rust] sqlite delete error: {error}");
+                release_debug_log!("Scribe library: SQLite delete failed for {recording_id}: {error}");
                 failed.push(BulkRecordingFailure {
                     id: recording_id,
                     error: format!("Unable to delete recording index: {error}"),
@@ -4667,7 +4661,7 @@ pub fn delete_recordings(
         }
     }
 
-    eprintln!("[delete] command complete");
+    release_debug_log!("[delete] command complete");
     Ok(DeleteRecordingsResult {
         deleted_ids,
         failed,
@@ -4719,7 +4713,7 @@ pub fn get_recording(app: AppHandle, recording_id: String) -> Result<RecordingDe
         {
             Some(transcript) => Some(transcript),
             None => {
-                eprintln!("Scribe library: transcript exists but could not be parsed");
+                release_debug_log!("Scribe library: transcript exists but could not be parsed");
                 None
             }
         }
@@ -4792,6 +4786,7 @@ pub fn load_scribe_settings(app: AppHandle) -> Result<SettingsViewData, String> 
     if !loaded.settings_file_existed
         || !loaded.onboarding_flag_present
         || !loaded.app_language_present
+        || loaded.legacy_cpu_preference_present
     {
         save_settings_file(&app, &settings)?;
     }
@@ -4888,7 +4883,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
     }
 
     let url = model_url(model);
-    eprintln!(
+    release_debug_log!(
         "Scribe model download: starting model_id={} filename={} expected_bytes={:?} final_path={} temp_path={}",
         model.id,
         model.filename,
@@ -4917,7 +4912,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
 
     let client = reqwest::blocking::Client::new();
     let response = client.get(&url).send().map_err(|error| {
-        eprintln!(
+        release_debug_log!(
             "Scribe model download: request failed model_id={} filename={} temp_path={} error_category=connection error={}",
             model.id,
             model.filename,
@@ -4927,7 +4922,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
         format!("Unable to start model download: {error}")
     })?;
     let status = response.status();
-    eprintln!(
+    release_debug_log!(
         "Scribe model download: response received model_id={} filename={} http_status={} content_length={:?}",
         model.id,
         model.filename,
@@ -4936,7 +4931,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
     );
     let initial_content_length = response.content_length();
     let mut response = response.error_for_status().map_err(|error| {
-        eprintln!(
+        release_debug_log!(
             "Scribe model download: HTTP status failure model_id={} filename={} http_status={} content_length={:?} error_category=http error={}",
             model.id,
             model.filename,
@@ -4950,7 +4945,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
     let total_bytes = response_content_length.or(model.expected_bytes);
     let expected_downloaded_bytes = response_content_length.or(model.expected_bytes);
     let mut file = File::create(&temp_path).map_err(|error| {
-        eprintln!(
+        release_debug_log!(
             "Scribe model download: unable to create temp file model_id={} filename={} temp_path={} error_category=storage error={}",
             model.id,
             model.filename,
@@ -4971,7 +4966,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
         }
         let read = response.read(&mut buffer).map_err(|error| {
             let _ = std::fs::remove_file(&temp_path);
-            eprintln!(
+            release_debug_log!(
                 "Scribe model download: stream read failed model_id={} filename={} downloaded_bytes={} total_bytes={:?} temp_path={} error_category=download error={}",
                 model.id,
                 model.filename,
@@ -4987,7 +4982,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
         }
         file.write_all(&buffer[..read]).map_err(|error| {
             let _ = std::fs::remove_file(&temp_path);
-            eprintln!(
+            release_debug_log!(
                 "Scribe model download: write failed model_id={} filename={} downloaded_bytes={} total_bytes={:?} temp_path={} temp_size={:?} error_category=storage error={}",
                 model.id,
                 model.filename,
@@ -5010,7 +5005,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
     }
     file.flush()
         .map_err(|error| {
-            eprintln!(
+            release_debug_log!(
                 "Scribe model download: flush failed model_id={} filename={} downloaded_bytes={} total_bytes={:?} temp_path={} temp_size={:?} error_category=storage error={}",
                 model.id,
                 model.filename,
@@ -5022,7 +5017,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
             );
             format!("Unable to flush model download: {error}")
         })?;
-    eprintln!(
+    release_debug_log!(
         "Scribe model download: stream completed model_id={} filename={} downloaded_bytes={} content_length={:?} expected_bytes={:?} temp_path={} temp_size={:?}",
         model.id,
         model.filename,
@@ -5035,7 +5030,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
 
     if downloaded == 0 {
         let _ = std::fs::remove_file(&temp_path);
-        eprintln!(
+        release_debug_log!(
             "Scribe model download: empty download model_id={} filename={} temp_path={} error_category=incomplete",
             model.id,
             model.filename,
@@ -5046,7 +5041,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
     if let Some(expected_bytes) = expected_downloaded_bytes {
         if downloaded != expected_bytes {
             let _ = std::fs::remove_file(&temp_path);
-            eprintln!(
+            release_debug_log!(
                 "Scribe model download: size mismatch model_id={} filename={} downloaded_bytes={} expected_bytes={} content_length={:?} hardcoded_expected_bytes={:?} temp_path={} error_category=incomplete",
                 model.id,
                 model.filename,
@@ -5061,7 +5056,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
     }
     if !whisper_model_file_looks_valid(&temp_path, model.expected_bytes) {
         let _ = std::fs::remove_file(&temp_path);
-        eprintln!(
+        release_debug_log!(
             "Scribe model download: model header validation failed model_id={} filename={} downloaded_bytes={} temp_path={} error_category=invalid_model",
             model.id,
             model.filename,
@@ -5073,7 +5068,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
 
     emit_progress("installing", downloaded, Some(downloaded));
     std::fs::rename(&temp_path, &final_path).map_err(|error| {
-        eprintln!(
+        release_debug_log!(
             "Scribe model download: rename failed model_id={} filename={} downloaded_bytes={} temp_path={} temp_size={:?} final_path={} final_size={:?} error_category=storage error={}",
             model.id,
             model.filename,
@@ -5086,7 +5081,7 @@ fn download_whisper_model_blocking(app: AppHandle, model_id: String) -> Result<(
         );
         format!("Unable to install downloaded model: {error}")
     })?;
-    eprintln!(
+    release_debug_log!(
         "Scribe model download: installed model_id={} filename={} downloaded_bytes={} final_path={} final_size={:?}",
         model.id,
         model.filename,
@@ -5342,6 +5337,15 @@ pub fn transcribe_recording_chunked_dev(
         output_dir: paths.whisper.clone(),
         cancel: cancel.clone(),
         gpu_failed: false,
+        model_id: context
+            .model_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        model_size_bytes: file_size(&context.model_path),
+        last_failure_detail: None,
+        prior_auto_failure_detail: None,
     };
     dev_try!(provenance.event("PRIMARY_MERGE_STARTED", None, None, None));
     let merged = dev_try!(crate::transcription_chunking::orchestrate_primary_observed(
@@ -5510,7 +5514,7 @@ fn transcribe_recording_blocking_inner(
                         error
                     ),
                 );
-                eprintln!(
+                release_debug_log!(
                     "Scribe transcription: unable to remove stale file recording_id={} path={} error={}",
                     recording_id,
                     stale_path.display(),
@@ -5554,7 +5558,7 @@ fn transcribe_recording_blocking_inner(
         ),
     );
 
-    eprintln!(
+    release_debug_log!(
         "Scribe transcription: starting recording_id={} source={} source_extension={} source_path={} source_exists={} source_size={:?} ffmpeg_path={} ffmpeg_exists={} ffmpeg_executable={} ffprobe_path={} whisper_path={} whisper_exists={} whisper_executable={} model_id={} model_path={} model_exists={} model_size={:?} language={} metadata_duration_seconds={}",
         recording_id,
         if is_imported { "imported" } else { "microphone" },
@@ -5589,7 +5593,7 @@ fn transcribe_recording_blocking_inner(
         &runtime_context.source_path,
         &runtime_context.processing_wav,
     );
-    eprintln!(
+    release_debug_log!(
         "Scribe transcription: ffmpeg path={} exists={} executable={} args={:?} recording_id={} model_id={} audio_path={} processing_wav={}",
         ffmpeg.display(),
         ffmpeg.exists(),
@@ -5607,8 +5611,8 @@ fn transcribe_recording_blocking_inner(
     crate::transcription_chunking::configure_background_command(&mut conversion_command);
     conversion_command
         .args(&ffmpeg_args)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     let conversion_result =
         crate::transcription_chunking::run_candidate_child(conversion_command, &cancel).map_err(
             |error| {
@@ -5640,7 +5644,7 @@ fn transcribe_recording_blocking_inner(
                 file_size(&processing_wav),
             ),
         );
-        eprintln!(
+        release_debug_log!(
             "Scribe transcription: FFmpeg failed recording_id={} exit={:?}",
             recording_id, conversion_result.exit_code,
         );
@@ -5652,7 +5656,7 @@ fn transcribe_recording_blocking_inner(
     {
         Ok(duration) => Some(duration),
         Err(error) => {
-            eprintln!(
+            release_debug_log!(
                     "Scribe transcription: unable to probe processing WAV recording_id={} path={} error={}",
                     recording_id,
                     processing_wav.display(),
@@ -5661,7 +5665,7 @@ fn transcribe_recording_blocking_inner(
             None
         }
     };
-    eprintln!(
+    release_debug_log!(
             "Scribe transcription: FFmpeg succeeded recording_id={} exit={:?} processing_wav={} exists={} size={:?} duration_seconds={:?}",
             recording_id,
             conversion_result.exit_code,
@@ -5708,7 +5712,7 @@ fn transcribe_recording_blocking_inner(
         "-of".to_string(),
         whisper_output_prefix.to_string_lossy().to_string(),
     ];
-    eprintln!(
+    release_debug_log!(
         "Scribe transcription: whisper path={} exists={} executable={} args={:?} recording_id={} model_id={} audio_path={} processing_wav={}",
         whisper_cli.display(),
         whisper_cli.exists(),
@@ -5726,8 +5730,9 @@ fn transcribe_recording_blocking_inner(
         &run_id,
         production_diagnostics,
         cancel,
+        &settings.whisper_model,
     )?;
-    eprintln!(
+    release_debug_log!(
         "Scribe transcription: whisper succeeded recording_id={} source={} output_json={} output_json_exists={} output_json_size={:?}",
         recording_id,
         if is_imported { "imported" } else { "microphone" },
@@ -5755,7 +5760,6 @@ fn transcribe_recording_blocking_inner(
         Some(production_progress(0, 1, "finalizing")),
     );
 
-    preserve_forensic_json(&app, &recording_id, "raw-whisper", &whisper_output_json);
     let transcript = match parse_whisper_segments_with_sanitization(&whisper_output_json) {
         Ok((segments, sanitization)) => {
             if let Some(summary) = sanitization {
@@ -5768,7 +5772,7 @@ fn transcribe_recording_blocking_inner(
                         summary.first_offsets
                     ),
                 );
-                eprintln!(
+                release_debug_log!(
                     "Scribe transcription: sanitized invalid UTF-8 in whisper JSON recording_id={} invalid_sequence_count={} first_offsets={:?}",
                     recording_id,
                     summary.invalid_sequence_count,
@@ -5820,7 +5824,7 @@ fn transcribe_recording_blocking_inner(
                         repetition_filter.zero_duration_prefix_loops
                     ),
                 );
-                eprintln!(
+                release_debug_log!(
                     "Scribe transcription: repetition filter recording_id={} candidates={} removed_segments={} zero_duration_loops={} zero_duration_prefix_loops={}",
                     recording_id,
                     repetition_filter.candidates,
@@ -5840,7 +5844,7 @@ fn transcribe_recording_blocking_inner(
                     transcript.text.chars().count()
                 ),
             );
-            eprintln!(
+            release_debug_log!(
                 "Scribe transcription: whisper JSON parsed recording_id={} output_json={} output_json_size={:?} segments={} text_chars={}",
                 recording_id,
                 whisper_output_json.display(),
@@ -5869,7 +5873,7 @@ fn transcribe_recording_blocking_inner(
                     error
                 ),
             );
-            eprintln!(
+            release_debug_log!(
                 "Scribe transcription: whisper JSON parse failed recording_id={} output_json={} output_json_exists={} output_json_size={:?} error={:?}",
                 recording_id,
                 whisper_output_json.display(),
@@ -5909,7 +5913,7 @@ fn transcribe_recording_blocking_inner(
                 error
             ),
         );
-        eprintln!(
+        release_debug_log!(
             "Scribe transcription: transcript serialization failed recording_id={} error={}",
             recording_id, error
         );
@@ -5935,7 +5939,7 @@ fn transcribe_recording_blocking_inner(
                 error
             ),
         );
-        eprintln!(
+        release_debug_log!(
             "Scribe transcription: transcript write failed recording_id={} transcript_path={} error={}",
             recording_id,
             transcript_path.display(),
@@ -5959,7 +5963,7 @@ fn transcribe_recording_blocking_inner(
                 error
             ),
         );
-        eprintln!(
+        release_debug_log!(
             "Scribe transcription: database open failed after transcript write recording_id={} error={}",
             recording_id, error
         );
@@ -5987,7 +5991,7 @@ fn transcribe_recording_blocking_inner(
                     error
                 ),
             );
-            eprintln!(
+            release_debug_log!(
                 "Scribe transcription: unable to read recording index recording_id={} error={}",
                 recording_id, error
             );
@@ -6017,7 +6021,7 @@ fn transcribe_recording_blocking_inner(
                 error
             ),
         );
-        eprintln!(
+        release_debug_log!(
             "Scribe transcription: unable to update recording index recording_id={} error={}",
             recording_id, error
         );
@@ -6034,7 +6038,7 @@ fn transcribe_recording_blocking_inner(
         Some(metadata.duration_seconds),
         Some(production_progress(1, 1, "complete")),
     );
-    eprintln!(
+    release_debug_log!(
         "Scribe transcription: transcript persisted recording_id={} transcript_path={} transcript_exists={} transcript_size={:?}",
         recording_id,
         transcript_path.display(),
@@ -6075,7 +6079,7 @@ fn transcribe_recording_blocking_inner(
                 error
             ),
         );
-        eprintln!("Scribe transcription: unable to remove processing WAV: {error}");
+        release_debug_log!("Scribe transcription: unable to remove processing WAV: {error}");
     } else {
         append_transcription_diagnostic(
             &app,
@@ -6098,7 +6102,7 @@ fn transcribe_recording_blocking_inner(
                 error
             ),
         );
-        eprintln!("Scribe transcription: unable to remove whisper output JSON: {error}");
+        release_debug_log!("Scribe transcription: unable to remove whisper output JSON: {error}");
     } else {
         append_transcription_diagnostic(
             &app,
@@ -6159,5 +6163,32 @@ mod progress_tests {
         assert!(production_progress(48, 48, "transcribing") < 100.0);
         assert_eq!(production_progress(48, 48, "complete"), 100.0);
         assert_eq!(production_progress(1, 0, "transcribing"), 5.0);
+    }
+}
+
+#[cfg(test)]
+mod legacy_cpu_preference_tests {
+    use super::{discard_legacy_cpu_only_preference, ScribeSettings};
+    use serde_json::json;
+
+    #[test]
+    fn old_cpu_only_preference_is_removed_and_cannot_be_reserialized() {
+        let mut settings: ScribeSettings = serde_json::from_value(json!({
+            "cpuOnlyTranscription": true,
+            "cpu_only_transcription": true
+        }))
+        .expect("legacy settings should deserialize");
+
+        assert!(discard_legacy_cpu_only_preference(&mut settings));
+        let saved = serde_json::to_value(settings).expect("settings should serialize");
+        assert!(saved.get("cpuOnlyTranscription").is_none());
+        assert!(saved.get("cpu_only_transcription").is_none());
+    }
+
+    #[test]
+    fn normal_settings_do_not_request_legacy_preference_migration() {
+        let mut settings: ScribeSettings = serde_json::from_value(json!({}))
+            .expect("defaulted settings should deserialize");
+        assert!(!discard_legacy_cpu_only_preference(&mut settings));
     }
 }

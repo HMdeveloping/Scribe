@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { recordMicrophoneDiagnostic } from "../microphone-diagnostics";
 
 const MIME_TYPE_CANDIDATES = [
   "audio/webm;codecs=opus",
@@ -17,7 +18,7 @@ function getSupportedMimeType() {
   return MIME_TYPE_CANDIDATES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ?? "";
 }
 
-export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
+export function useAudioRecorder(stream: MediaStream | null, paused: boolean, sessionId: string) {
   const [status, setStatus] = useState<RecorderStatus>("idle");
   const [mimeType, setMimeType] = useState("");
   const [error, setError] = useState("");
@@ -35,10 +36,19 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
     let recorder: MediaRecorder | null = null;
 
     try {
-      console.info("[recording-lifecycle] media_stream_ready", {
-        audioTracks: stream.getAudioTracks().length,
-        active: stream.active,
-        performanceNowMs: Math.round(performance.now()),
+      const audioTracks = stream.getAudioTracks();
+      if (!stream.active || audioTracks.length === 0 || audioTracks.every((track) => track.readyState !== "live")) {
+        recordMicrophoneDiagnostic(sessionId, "recorder_initialization_rejected", {
+          category: "stream_not_live",
+          audioTrackCount: audioTracks.length,
+        });
+        setError("stream_not_live");
+        setStatus("error");
+        return;
+      }
+      recordMicrophoneDiagnostic(sessionId, "recorder_initialization_attempted", {
+        audioTrackCount: audioTracks.length,
+        streamActive: stream.active,
       });
       setStatus("preparing");
       const selectedMimeType = getSupportedMimeType();
@@ -53,67 +63,73 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
       startRequestedAtRef.current = null;
       chunkCountRef.current = 0;
       setMimeType(recorder.mimeType || selectedMimeType);
-      console.info("[recording-lifecycle] media_recorder_created", {
+      recordMicrophoneDiagnostic(sessionId, "media_recorder_created", {
         mimeType: recorder.mimeType || selectedMimeType || "",
         state: recorder.state,
         timesliceMs: CHUNK_TIMESLICE_MS,
-        performanceNowMs: Math.round(performance.now()),
       });
 
       recorder.ondataavailable = (event) => {
+        if (recorderRef.current !== recorder) return;
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
           chunkCountRef.current += 1;
           const elapsedMs = startedAtRef.current === null ? null : Math.round(performance.now() - startedAtRef.current);
           if (!firstChunkReceivedRef.current) {
             firstChunkReceivedRef.current = true;
-            console.info("[recording-lifecycle] first_dataavailable", {
-              size: event.data.size,
-              elapsedMs,
-              performanceNowMs: Math.round(performance.now()),
-            });
+            recordMicrophoneDiagnostic(sessionId, "first_audio_chunk_received", { size: event.data.size, elapsedMs });
           }
-          console.info("[recording-lifecycle] dataavailable", {
+          recordMicrophoneDiagnostic(sessionId, "audio_chunk_received", {
             chunkIndex: chunkCountRef.current,
             size: event.data.size,
             elapsedMs,
           });
         }
       };
-      recorder.onerror = (event) => {
-        console.error("Scribe: MediaRecorder failed", event);
-        setError("Unable to record audio.");
+      recorder.onerror = () => {
+        if (recorderRef.current !== recorder) return;
+        recordMicrophoneDiagnostic(sessionId, "media_recorder_failed", { category: "media_recorder_error" });
+        setError("media_recorder_error");
         setStatus("error");
       };
-      recorder.onstart = () => {
+      const activeRecorder = recorder;
+      activeRecorder.onstart = () => {
+        if (recorderRef.current !== activeRecorder) return;
         startedAtRef.current = performance.now();
-        console.info("[recording-lifecycle] media_recorder_onstart", {
-          state: recorder?.state,
+        recordMicrophoneDiagnostic(sessionId, "audio_capture_started", {
+          state: activeRecorder.state,
           startDelayMs: startRequestedAtRef.current === null ? null : Math.round(startedAtRef.current - startRequestedAtRef.current),
-          performanceNowMs: Math.round(startedAtRef.current),
         });
         earlyFlushFrameRef.current = requestAnimationFrame(() => {
           earlyFlushFrameRef.current = null;
-          if (!recorder || recorder.state !== "recording") return;
+          if (activeRecorder.state !== "recording") return;
           try {
-            console.info("[recording-lifecycle] media_recorder_request_data_after_start", {
-              state: recorder.state,
+            recordMicrophoneDiagnostic(sessionId, "audio_capture_initial_flush_requested", {
+              state: activeRecorder.state,
               elapsedRecordingDurationMs: startedAtRef.current === null ? 0 : Math.round(performance.now() - startedAtRef.current),
               chunksBeforeRequest: chunksRef.current.length,
-              performanceNowMs: Math.round(performance.now()),
             });
-            recorder.requestData();
+            activeRecorder.requestData();
           } catch (reason) {
-            console.warn("Scribe: early MediaRecorder requestData failed", reason);
+            recordMicrophoneDiagnostic(sessionId, "audio_capture_initial_flush_failed", { category: "request_data_failed" });
           }
         });
         setStatus("recording");
       };
-      recorder.onpause = () => setStatus("paused");
-      recorder.onresume = () => setStatus("recording");
+      recorder.onpause = () => {
+        if (recorderRef.current !== recorder) return;
+        recordMicrophoneDiagnostic(sessionId, "audio_capture_paused");
+        setStatus("paused");
+      };
+      recorder.onresume = () => {
+        if (recorderRef.current !== recorder) return;
+        recordMicrophoneDiagnostic(sessionId, "audio_capture_resumed");
+        setStatus("recording");
+      };
       recorder.onstop = () => {
+        if (recorderRef.current !== recorder) return;
         const durationMs = startedAtRef.current === null ? 0 : performance.now() - startedAtRef.current;
-        console.info("[recording-lifecycle] media_recorder_onstop", {
+        recordMicrophoneDiagnostic(sessionId, "audio_capture_stopped", {
           chunks: chunksRef.current.length,
           finalBlobSize: chunksRef.current.reduce((total, chunk) => total + chunk.size, 0),
           elapsedRecordingDurationMs: Math.round(durationMs),
@@ -122,14 +138,15 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
       };
       startRequestedAtRef.current = performance.now();
       recorder.start(CHUNK_TIMESLICE_MS);
-      console.info("[recording-lifecycle] media_recorder_start_called", {
+      recordMicrophoneDiagnostic(sessionId, "audio_capture_start_requested", {
         state: recorder.state,
         timesliceMs: CHUNK_TIMESLICE_MS,
-        performanceNowMs: Math.round(startRequestedAtRef.current),
       });
     } catch (reason) {
-      console.error("Scribe: MediaRecorder initialization failed", reason);
-      setError("Unable to record audio.");
+      recordMicrophoneDiagnostic(sessionId, "recorder_initialization_failed", {
+        category: reason instanceof DOMException ? reason.name : "media_recorder_initialization_error",
+      });
+      setError("media_recorder_initialization_error");
       setStatus("error");
     }
 
@@ -139,76 +156,80 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
         earlyFlushFrameRef.current = null;
       }
       if (recorder && recorder.state !== "inactive" && !stopPromiseRef.current) {
-        recorder.stop();
+        try { recorder.stop(); } catch { /* Component teardown must remain safe. */ }
       }
-      recorderRef.current = null;
-      chunksRef.current = [];
-      stopPromiseRef.current = null;
-      startedAtRef.current = null;
-      firstChunkReceivedRef.current = false;
-      startRequestedAtRef.current = null;
-      chunkCountRef.current = 0;
+      // If a previous session is being replaced, its user action has already
+      // finalized it. This release prevents stale recorder events affecting a retry.
+      if (recorderRef.current === recorder) recorderRef.current = null;
     };
-  }, [stream]);
+  }, [sessionId, stream]);
 
   useEffect(() => {
     const recorder = recorderRef.current;
     if (!recorder) return;
 
-    if (paused && recorder.state === "recording") {
-      recorder.pause();
-    } else if (!paused && recorder.state === "paused") {
-      recorder.resume();
+    try {
+      if (paused && recorder.state === "recording") {
+        recorder.pause();
+      } else if (!paused && recorder.state === "paused") {
+        recorder.resume();
+      }
+    } catch {
+      recordMicrophoneDiagnostic(sessionId, "audio_capture_pause_resume_failed", { category: "media_recorder_state_error" });
+      setError("media_recorder_state_error");
+      setStatus("error");
     }
-  }, [paused]);
+  }, [paused, sessionId]);
 
   const stop = useCallback(() => {
     const recorder = recorderRef.current;
     if (!recorder) return Promise.resolve(new Blob(chunksRef.current, { type: mimeType }));
     if (stopPromiseRef.current) return stopPromiseRef.current;
 
-    stopPromiseRef.current = new Promise<Blob>((resolve, reject) => {
-      const finalize = () => {
-        window.setTimeout(() => {
-          const blob = new Blob(chunksRef.current, { type: recorder.mimeType || mimeType });
-          console.info("[recording-lifecycle] final_blob", {
-            size: blob.size,
-            type: blob.type,
-            chunks: chunksRef.current.length,
-            elapsedRecordingDurationMs: startedAtRef.current === null ? 0 : Math.round(performance.now() - startedAtRef.current),
-          });
-          resolve(blob);
-        }, 0);
-      };
-      const fail = (reason: unknown) => reject(reason);
-      recorder.addEventListener("stop", finalize, { once: true });
-      recorder.addEventListener("error", fail, { once: true });
-
-      try {
-        if (earlyFlushFrameRef.current !== null) {
-          cancelAnimationFrame(earlyFlushFrameRef.current);
-          earlyFlushFrameRef.current = null;
-        }
-        if (recorder.state === "inactive") {
-          recorder.removeEventListener("stop", finalize);
-          finalize();
-        } else {
-          console.info("[recording-lifecycle] media_recorder_request_data_before_stop", {
-            state: recorder.state,
-            chunksBeforeRequest: chunksRef.current.length,
-            elapsedRecordingDurationMs: startedAtRef.current === null ? 0 : Math.round(performance.now() - startedAtRef.current),
-          });
-          recorder.requestData();
-          recorder.stop();
-        }
-      } catch (reason) {
-        recorder.removeEventListener("stop", finalize);
-        fail(reason);
+    let resolveStop!: (blob: Blob) => void;
+    let rejectStop!: (reason: unknown) => void;
+    const stopPromise = new Promise<Blob>((resolve, reject) => { resolveStop = resolve; rejectStop = reject; });
+    stopPromiseRef.current = stopPromise;
+    const finalize = () => {
+      window.setTimeout(() => {
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || mimeType });
+        recordMicrophoneDiagnostic(sessionId, "final_audio_blob_ready", {
+          size: blob.size,
+          chunks: chunksRef.current.length,
+          elapsedRecordingDurationMs: startedAtRef.current === null ? 0 : Math.round(performance.now() - startedAtRef.current),
+        });
+        resolveStop(blob);
+      }, 0);
+    };
+    const fail = (reason: Event) => {
+      recordMicrophoneDiagnostic(sessionId, "audio_capture_stop_failed", { category: "media_recorder_error" });
+      rejectStop(new Error(reason.type));
+    };
+    recorder.addEventListener("stop", finalize, { once: true });
+    recorder.addEventListener("error", fail, { once: true });
+    try {
+      if (earlyFlushFrameRef.current !== null) {
+        cancelAnimationFrame(earlyFlushFrameRef.current);
+        earlyFlushFrameRef.current = null;
       }
-    });
-
-    return stopPromiseRef.current;
-  }, [mimeType]);
+      if (recorder.state === "inactive") {
+        finalize();
+      } else {
+        recordMicrophoneDiagnostic(sessionId, "audio_capture_final_data_requested", {
+          state: recorder.state,
+          chunksBeforeRequest: chunksRef.current.length,
+          elapsedRecordingDurationMs: startedAtRef.current === null ? 0 : Math.round(performance.now() - startedAtRef.current),
+        });
+        recorder.requestData();
+        recorder.stop();
+      }
+    } catch (reason) {
+      recorder.removeEventListener("stop", finalize);
+      recorder.removeEventListener("error", fail);
+      rejectStop(reason);
+    }
+    return stopPromiseRef.current!;
+  }, [mimeType, sessionId]);
 
   const discard = useCallback(() => {
     const recorder = recorderRef.current;
@@ -224,13 +245,13 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
         recorder.onerror = null;
         recorder.onstop = null;
         recorder.stop();
-      } catch (reason) {
-        console.warn("Scribe: unable to stop discarded recorder", reason);
+      } catch {
+        recordMicrophoneDiagnostic(sessionId, "discard_stop_failed", { category: "media_recorder_stop_error" });
       }
     }
     recorderRef.current = null;
     setStatus("stopped");
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     return () => {
@@ -240,15 +261,9 @@ export function useAudioRecorder(stream: MediaStream | null, paused: boolean) {
         earlyFlushFrameRef.current = null;
       }
       if (recorder && recorder.state !== "inactive" && !stopPromiseRef.current) {
-        recorder.stop();
+        try { recorder.stop(); } catch { /* Component teardown must remain safe. */ }
       }
-      recorderRef.current = null;
-      chunksRef.current = [];
-      stopPromiseRef.current = null;
-      startedAtRef.current = null;
-      firstChunkReceivedRef.current = false;
-      startRequestedAtRef.current = null;
-      chunkCountRef.current = 0;
+      if (recorderRef.current === recorder) recorderRef.current = null;
     };
   }, []);
 

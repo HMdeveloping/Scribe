@@ -2758,6 +2758,34 @@ button {
   background: var(--sidebar);
 }
 
+.recording-recovery-controls {
+  width: min(520px, 100%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  flex: 0 0 auto;
+}
+
+.recording-recovery-controls p {
+  flex: 1 0 100%;
+  margin: 0 0 2px;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.recording-recovery-controls button {
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .live-transcript {
   width: 100%;
   flex: 1;
@@ -2860,6 +2888,15 @@ button {
 
   .recording-controls {
     flex-wrap: wrap;
+  }
+
+  .recording-recovery-controls {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .recording-recovery-controls button {
+    flex: 1 1 150px;
   }
 
   .settings-row {

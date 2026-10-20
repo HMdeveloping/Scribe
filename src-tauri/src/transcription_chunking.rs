@@ -645,26 +645,72 @@ pub enum ChildDisposition {
 }
 
 pub fn run_candidate_child(
+    command: std::process::Command,
+    cancel: &CancellationToken,
+) -> Result<ChildResult, String> {
+    run_candidate_child_with_timeout(command, cancel, None)
+}
+
+pub fn run_candidate_child_with_timeout(
     mut command: std::process::Command,
     cancel: &CancellationToken,
+    timeout: Option<std::time::Duration>,
 ) -> Result<ChildResult, String> {
     configure_background_command(&mut command);
     let started = std::time::Instant::now();
     let mut child = command.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+    let stderr_reader = child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            const MAX_CAPTURE_BYTES: usize = 32 * 1024;
+            let mut captured = Vec::with_capacity(MAX_CAPTURE_BYTES);
+            let mut buffer = [0u8; 4096];
+            loop {
+                match stderr.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => {
+                        let remaining = MAX_CAPTURE_BYTES.saturating_sub(captured.len());
+                        captured.extend_from_slice(&buffer[..read.min(remaining)]);
+                    }
+                }
+            }
+            captured
+        })
+    });
     loop {
         if cancel.is_cancelled() {
             let _ = child.kill();
             let status = child.wait().map_err(|e| format!("reap failed: {e}"))?;
+            let stderr_excerpt = take_sanitized_stderr(stderr_reader);
             return Ok(ChildResult {
                 disposition: ChildDisposition::Cancelled,
                 exit_code: status.code(),
                 termination_signal: termination_signal(&status),
                 elapsed_ms: started.elapsed().as_millis(),
                 used_cpu_fallback: false,
+                timed_out: false,
+                stderr_excerpt,
+            });
+        }
+        if timeout.is_some_and(|limit| started.elapsed() >= limit) {
+            let _ = child.kill();
+            let status = child
+                .wait()
+                .map_err(|e| format!("timeout reap failed: {e}"))?;
+            let stderr_excerpt = take_sanitized_stderr(stderr_reader);
+            return Ok(ChildResult {
+                disposition: ChildDisposition::Failed,
+                exit_code: status.code(),
+                termination_signal: termination_signal(&status),
+                elapsed_ms: started.elapsed().as_millis(),
+                used_cpu_fallback: false,
+                timed_out: true,
+                stderr_excerpt,
             });
         }
         match child.try_wait().map_err(|e| format!("wait failed: {e}"))? {
             Some(status) => {
+                let stderr_excerpt = take_sanitized_stderr(stderr_reader);
                 return Ok(ChildResult {
                     disposition: if status.success() {
                         ChildDisposition::Succeeded
@@ -675,20 +721,97 @@ pub fn run_candidate_child(
                     termination_signal: termination_signal(&status),
                     elapsed_ms: started.elapsed().as_millis(),
                     used_cpu_fallback: false,
-                })
+                    timed_out: false,
+                    stderr_excerpt,
+                });
             }
             None => std::thread::sleep(std::time::Duration::from_millis(25)),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+fn take_sanitized_stderr(reader: Option<std::thread::JoinHandle<Vec<u8>>>) -> Option<String> {
+    let captured = reader?.join().ok()?;
+    sanitize_whisper_stderr(&captured)
+}
+
+fn sanitize_whisper_stderr(captured: &[u8]) -> Option<String> {
+    const MAX_EXCERPT_BYTES: usize = 4096;
+    const MAX_LINES: usize = 24;
+    const MAX_LINE_CHARS: usize = 320;
+    let text = String::from_utf8_lossy(captured);
+    let mut lines = Vec::new();
+    let mut total_bytes = 0usize;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let lower = line.to_ascii_lowercase();
+        if [
+            "password",
+            "authorization",
+            "bearer ",
+            "api_key",
+            "apikey",
+            "secret",
+        ]
+        .iter()
+        .any(|sensitive| lower.contains(sensitive))
+        {
+            continue;
+        }
+        let safe_line = [
+            "/Users/",
+            "/private/",
+            "/var/folders/",
+            "/Volumes/",
+            "/tmp/",
+            "/home/",
+        ]
+        .iter()
+        .filter_map(|prefix| line.find(prefix))
+        .min()
+        .map_or_else(
+            || line.to_string(),
+            |path_start| {
+                format!(
+                    "{}[local path and remaining line redacted]",
+                    &line[..path_start]
+                )
+            },
+        );
+        let safe_line: String = safe_line
+            .chars()
+            .filter(|character| !character.is_control() || *character == '\t')
+            .take(MAX_LINE_CHARS)
+            .collect();
+        if safe_line.is_empty() {
+            continue;
+        }
+        let line_bytes = safe_line.len() + 1;
+        if lines.len() >= MAX_LINES || total_bytes + line_bytes > MAX_EXCERPT_BYTES {
+            break;
+        }
+        total_bytes += line_bytes;
+        lines.push(safe_line);
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChildResult {
     pub disposition: ChildDisposition,
     pub exit_code: Option<i32>,
     pub termination_signal: Option<i32>,
     pub elapsed_ms: u128,
     pub used_cpu_fallback: bool,
+    pub timed_out: bool,
+    pub stderr_excerpt: Option<String>,
 }
 
 #[cfg(unix)]
@@ -784,6 +907,25 @@ pub struct RealChunkInferenceRunner {
     pub output_dir: std::path::PathBuf,
     pub cancel: std::sync::Arc<CancellationToken>,
     pub gpu_failed: bool,
+    pub model_id: String,
+    pub model_size_bytes: Option<u64>,
+    pub last_failure_detail: Option<String>,
+    pub prior_auto_failure_detail: Option<String>,
+}
+impl RealChunkInferenceRunner {
+    fn record_failure(&mut self, used_cpu: bool, detail: String) {
+        if !used_cpu {
+            self.prior_auto_failure_detail = Some(detail.clone());
+        }
+        self.last_failure_detail = Some(if used_cpu {
+            self.prior_auto_failure_detail.as_ref().map_or_else(
+                || detail.clone(),
+                |prior| format!("{detail}; prior_auto_attempt=({prior})"),
+            )
+        } else {
+            detail
+        });
+    }
 }
 impl ChunkInferenceRunner for RealChunkInferenceRunner {
     fn run(
@@ -797,40 +939,115 @@ impl ChunkInferenceRunner for RealChunkInferenceRunner {
             return Err("cancelled");
         }
         let prefix = self.output_dir.join(format!("chunk-{:06}", core.index));
+        let json = prefix.with_extension("json");
+        let use_cpu = cpu || self.gpu_failed;
+        if let Err(error) = std::fs::remove_file(&json) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                let detail = format!(
+                    "backend={} stage=stale_output_cleanup error_kind={:?}",
+                    if use_cpu { "cpu" } else { "auto" },
+                    error.kind(),
+                );
+                self.record_failure(use_cpu, detail);
+                return Err("output cleanup failure");
+            }
+        }
         let mut args = candidate_whisper_args(&self.model, wav, &self.language, &prefix);
-        if cpu || self.gpu_failed {
+        if use_cpu {
             args.insert(0, "-ng".into());
         }
         let mut command = std::process::Command::new(&self.whisper_cli);
         command
             .args(args)
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        let result = run_candidate_child(command, cancel).map_err(|_| "child failure")?;
+            .stderr(std::process::Stdio::piped());
+        const WHISPER_CHUNK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20 * 60);
+        let result = match run_candidate_child_with_timeout(
+            command,
+            cancel,
+            Some(WHISPER_CHUNK_TIMEOUT),
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                let detail = format!(
+                    "backend={} stage=process_launch model_id={} model_size_bytes={:?} arch={} executable_available={} cause={}",
+                    if use_cpu { "cpu" } else { "auto" },
+                    self.model_id,
+                    self.model_size_bytes,
+                    std::env::consts::ARCH,
+                    self.whisper_cli.is_file(),
+                    error,
+                );
+                self.record_failure(use_cpu, detail);
+                return Err("child failure");
+            }
+        };
         eprintln!(
-            "Scribe Whisper process: disposition={:?} exit_code={:?} signal={:?} cpu_fallback={} elapsed_ms={}",
+            "Scribe Whisper process: disposition={:?} exit_code={:?} signal={:?} cpu_fallback={} timed_out={} elapsed_ms={}",
             result.disposition,
             result.exit_code,
             result.termination_signal,
-            cpu || self.gpu_failed,
+            use_cpu,
+            result.timed_out,
             result.elapsed_ms
         );
         if result.disposition != ChildDisposition::Succeeded {
             if !cpu {
                 self.gpu_failed = true;
             }
+            let current_failure = format!(
+                "backend={} stage=process_exit model_id={} model_size_bytes={:?} arch={} executable_available={} exit_code={:?} signal={:?} cpu_execution={} timed_out={} elapsed_ms={}{}",
+                if use_cpu { "cpu" } else { "auto" },
+                self.model_id,
+                self.model_size_bytes,
+                std::env::consts::ARCH,
+                self.whisper_cli.is_file(),
+                result.exit_code,
+                result.termination_signal,
+                use_cpu,
+                result.timed_out,
+                result.elapsed_ms,
+                result.stderr_excerpt.as_ref().map_or_else(String::new, |excerpt| {
+                    format!("\nwhisper_stderr_excerpt:\n{excerpt}")
+                }),
+            );
+            self.record_failure(use_cpu, current_failure);
+            let _ = std::fs::remove_file(&json);
             return Err(if result.disposition == ChildDisposition::Cancelled {
                 "cancelled"
             } else {
                 "whisper failure"
             });
         }
-        let json = prefix.with_extension("json");
         if !json.is_file() {
+            let detail = format!(
+                "backend={} stage=json_output_missing model_id={} model_size_bytes={:?} arch={} executable_available={} exit_code={:?}",
+                if use_cpu { "cpu" } else { "auto" },
+                self.model_id,
+                self.model_size_bytes,
+                std::env::consts::ARCH,
+                self.whisper_cli.is_file(),
+                result.exit_code,
+            );
+            self.record_failure(use_cpu, detail);
             return Err("missing whisper JSON");
         }
         let parsed = crate::commands::recordings::parse_whisper_output_for_runtime(&json)
-            .map_err(|_| "parse failure")?;
+            .map_err(|_| {
+                let detail = format!(
+                    "backend={} stage=json_parse_failed model_id={} model_size_bytes={:?} arch={} executable_available={} exit_code={:?} json_bytes={:?}",
+                    if use_cpu { "cpu" } else { "auto" },
+                    self.model_id,
+                    self.model_size_bytes,
+                    std::env::consts::ARCH,
+                    self.whisper_cli.is_file(),
+                    result.exit_code,
+                    std::fs::metadata(&json).ok().map(|metadata| metadata.len()),
+                );
+                self.record_failure(use_cpu, detail);
+                "parse failure"
+            })?;
+        self.last_failure_detail = None;
         Ok(parsed_words_to_words(parsed))
     }
 }
@@ -946,13 +1163,14 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
         if cancel.is_cancelled() {
             return Err("cancelled");
         }
+        let initial_attempt = "normal";
         observer(DevObservation {
             chunk: Some(core.index),
             total_chunks,
             owner_start_frame: Some(core.start_frame),
             owner_end_frame: Some(core.end_frame),
             stage: "whisper",
-            attempt: Some("normal"),
+            attempt: Some(initial_attempt),
             outcome: "start",
             word_count: None,
             conflict: None,
@@ -965,7 +1183,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
                     owner_start_frame: Some(core.start_frame),
                     owner_end_frame: Some(core.end_frame),
                     stage: "whisper",
-                    attempt: Some("normal"),
+                    attempt: Some(initial_attempt),
                     outcome: "success",
                     word_count: Some(words.len()),
                     conflict: None,
@@ -982,7 +1200,7 @@ pub fn orchestrate_primary_observed<E: ChunkExtractor, I: ChunkInferenceRunner>(
                     owner_start_frame: Some(core.start_frame),
                     owner_end_frame: Some(core.end_frame),
                     stage: "whisper",
-                    attempt: Some("normal"),
+                    attempt: Some(initial_attempt),
                     outcome: "failure",
                     word_count: None,
                     conflict: None,
@@ -1246,7 +1464,7 @@ mod tests {
         let script = root.join("fake-whisper.sh");
         std::fs::write(
             &script,
-            "#!/bin/sh\nprefix=\"\"\nnext_prefix=0\ncpu=0\nfor arg in \"$@\"; do\n  if [ \"$next_prefix\" -eq 1 ]; then prefix=\"$arg\"; next_prefix=0; continue; fi\n  if [ \"$arg\" = \"-of\" ]; then next_prefix=1; fi\n  if [ \"$arg\" = \"-ng\" ]; then cpu=1; fi\ndone\nprintf '%s\\n' \"$@\" > \"${prefix}.args\"\nif [ \"$cpu\" -eq 0 ]; then\n  printf '{\"segments\":' > \"${prefix}.json\"\n  kill -SEGV $$\nfi\nprintf '{\"segments\":[{\"start\":0,\"end\":0.8,\"text\":\"hello\",\"words\":[{\"text\":\"hello\",\"start\":0,\"end\":0.8}]}]}' > \"${prefix}.json\"\n",
+            "#!/bin/sh\nprefix=\"\"\nnext_prefix=0\ncpu=0\nfor arg in \"$@\"; do\n  if [ \"$next_prefix\" -eq 1 ]; then prefix=\"$arg\"; next_prefix=0; continue; fi\n  if [ \"$arg\" = \"-of\" ]; then next_prefix=1; fi\n  if [ \"$arg\" = \"-ng\" ]; then cpu=1; fi\ndone\nprintf '%s\\n' \"$@\" > \"${prefix}.args\"\nif [ \"$cpu\" -eq 0 ]; then\n  printf '{\"segments\":' > \"${prefix}.json\"\n  kill -SEGV $$\nfi\nif [ \"$cpu\" -eq 1 ] && [ -e \"${prefix}.json\" ]; then exit 77; fi\nprintf '{\"segments\":[{\"start\":0,\"end\":0.8,\"text\":\"hello\",\"words\":[{\"text\":\"hello\",\"start\":0,\"end\":0.8}]}]}' > \"${prefix}.json\"\n",
         )
         .unwrap();
         let mut permissions = std::fs::metadata(&script).unwrap().permissions();
@@ -1259,12 +1477,16 @@ mod tests {
         std::fs::write(&wav, b"dummy").unwrap();
         let cancel = std::sync::Arc::new(CancellationToken::default());
         let mut runner = RealChunkInferenceRunner {
-            whisper_cli: script,
+            whisper_cli: script.clone(),
             model: model.clone(),
             language: "sl".into(),
             output_dir: output_dir.clone(),
             cancel: cancel.clone(),
             gpu_failed: false,
+            model_id: "test-model".into(),
+            model_size_bytes: Some(5),
+            last_failure_detail: None,
+            prior_auto_failure_detail: None,
         };
         let core = ChunkCore {
             index: 0,
@@ -1272,14 +1494,33 @@ mod tests {
             end_frame: SAMPLE_RATE,
         };
 
-        assert_eq!(runner.run(core, &wav, false, &cancel), Err("whisper failure"));
-        assert!(runner.gpu_failed, "a failed child disables further GPU attempts");
-        let words = runner.run(core, &wav, true, &cancel).expect("CPU retry succeeds");
+        assert_eq!(
+            runner.run(core, &wav, false, &cancel),
+            Err("whisper failure")
+        );
+        assert!(
+            runner.gpu_failed,
+            "a failed child disables further GPU attempts"
+        );
+        let failure = runner.last_failure_detail.as_deref().unwrap();
+        assert!(failure.contains("backend=auto"));
+        assert!(failure.contains("signal=Some(11)"));
+        assert!(failure.contains("cpu_execution=false"));
+        let words = runner
+            .run(core, &wav, true, &cancel)
+            .expect("CPU retry succeeds");
         assert_eq!(words, vec![word("hello", 0.0, 0.8)]);
+        assert!(runner.last_failure_detail.is_none());
         let args = std::fs::read_to_string(output_dir.join("chunk-000000.args")).unwrap();
         let args: Vec<_> = args.lines().collect();
-        assert_eq!(args[0], "-ng", "CPU retry explicitly disables GPU inference");
-        assert_eq!(args[1..5], ["-m", model.to_str().unwrap(), "-f", wav.to_str().unwrap()]);
+        assert_eq!(
+            args[0], "-ng",
+            "CPU retry explicitly disables GPU inference"
+        );
+        assert_eq!(
+            args[1..5],
+            ["-m", model.to_str().unwrap(), "-f", wav.to_str().unwrap()]
+        );
         let next_core = ChunkCore { index: 1, ..core };
         assert_eq!(
             runner.run(next_core, &wav, false, &cancel).unwrap(),
@@ -1292,6 +1533,106 @@ mod tests {
             std::fs::read_to_string(output_dir.join("chunk-000000.json")).unwrap(),
             r#"{"segments":[{"start":0,"end":0.8,"text":"hello","words":[{"text":"hello","start":0,"end":0.8}]}]}"#
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_timeout_kills_and_reaps_process() {
+        let cancel = CancellationToken::default();
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "exec sleep 5"]);
+        let result = run_candidate_child_with_timeout(
+            command,
+            &cancel,
+            Some(std::time::Duration::from_millis(50)),
+        )
+        .expect("timed out child should return a status");
+        assert_eq!(result.disposition, ChildDisposition::Failed);
+        assert!(result.timed_out);
+        assert_eq!(result.termination_signal, Some(9));
+    }
+
+    #[test]
+    fn whisper_stderr_excerpt_is_bounded_and_redacts_private_paths_and_secrets() {
+        let excerpt = sanitize_whisper_stderr(
+            b"libc++abi: terminating\nReferenced from: /Users/private/audio.wav\nauthorization: Bearer sensitive-token\n",
+        )
+        .expect("safe runtime lines remain available");
+        assert!(excerpt.contains("libc++abi: terminating"));
+        assert!(excerpt.contains("[local path and remaining line redacted]"));
+        assert!(!excerpt.contains("/Users/private"));
+        assert!(!excerpt.contains("sensitive-token"));
+        let long = (0..100)
+            .map(|_| "x".repeat(300))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let bounded = sanitize_whisper_stderr(long.as_bytes()).unwrap();
+        assert!(bounded.len() <= 4096);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_cpu_fallback_retains_both_backend_exit_details() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "scribe-cpu-fallback-failure-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let output_dir = root.join("out");
+        std::fs::create_dir_all(&output_dir).unwrap();
+        let script = root.join("whisper-fails.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\ncpu=0\nfor arg in \"$@\"; do [ \"$arg\" = \"-ng\" ] && cpu=1; done\nif [ \"$cpu\" -eq 0 ]; then printf 'libc++abi: terminating\\nReferenced from: /Users/private/audio.wav\\n' >&2; kill -SEGV $$; fi\nexit 7\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script, permissions).unwrap();
+        let model = root.join("model.bin");
+        let wav = root.join("chunk.wav");
+        std::fs::write(&model, b"model").unwrap();
+        std::fs::write(&wav, b"wav").unwrap();
+        let cancel = std::sync::Arc::new(CancellationToken::default());
+        let mut runner = RealChunkInferenceRunner {
+            whisper_cli: script,
+            model,
+            language: "sl".into(),
+            output_dir,
+            cancel: cancel.clone(),
+            gpu_failed: false,
+            model_id: "test-model".into(),
+            model_size_bytes: Some(5),
+            last_failure_detail: None,
+            prior_auto_failure_detail: None,
+        };
+        let core = ChunkCore {
+            index: 0,
+            start_frame: 0,
+            end_frame: SAMPLE_RATE,
+        };
+        assert_eq!(
+            runner.run(core, &wav, false, &cancel),
+            Err("whisper failure")
+        );
+        assert_eq!(
+            runner.run(core, &wav, true, &cancel),
+            Err("whisper failure")
+        );
+        let detail = runner.last_failure_detail.unwrap();
+        assert!(detail.contains("backend=cpu"));
+        assert!(detail.contains("exit_code=Some(7)"));
+        assert!(detail.contains("prior_auto_attempt=(backend=auto"));
+        assert!(detail.contains("signal=Some(11)"));
+        assert!(detail.contains("libc++abi: terminating"));
+        assert!(detail.contains("[local path and remaining line redacted]"));
+        assert!(!detail.contains("/Users/private"));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1832,6 +2173,7 @@ mod tests {
         assert_eq!(i.calls, vec![(0, false), (1, false), (1, true), (2, false)]);
         assert_eq!(events.last().unwrap().kind, "merge");
     }
+
     #[test]
     fn fake_orchestrator_aborts_before_merge_on_final_failure_or_cancel() {
         struct Bad;

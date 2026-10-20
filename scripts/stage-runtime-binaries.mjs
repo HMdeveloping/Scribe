@@ -149,6 +149,15 @@ function assertNoForbiddenMacosDeps(binary) {
   }
 }
 
+function assertPortableMacosRpaths(binary) {
+  const invalid = macosRpaths(binary).filter(
+    (rpath) => !rpath.startsWith("@loader_path") && !rpath.startsWith("@executable_path"),
+  );
+  if (invalid.length > 0) {
+    throw new Error(`${binary} has non-portable runtime search paths:\n${invalid.join("\n")}`);
+  }
+}
+
 for (const [envName, outputName] of inputs) {
   const source = process.env[envName];
   if (!source) {
@@ -216,15 +225,14 @@ if (!isWindows) {
     console.log(`staged ${libraryName} from ${source}`);
   }
 
-  const stagedWhisperCli = path.join(outputDir, "whisper-cli");
-  for (const rpath of macosRpaths(stagedWhisperCli)) {
-    execFileSync("install_name_tool", ["-delete_rpath", rpath, stagedWhisperCli]);
-  }
-  execFileSync("install_name_tool", ["-add_rpath", "@executable_path", stagedWhisperCli]);
-
   for (const stagedBinary of fs.readdirSync(outputDir).map((entry) => path.join(outputDir, entry))) {
     assertMacosArm64(stagedBinary);
     assertNoForbiddenMacosDeps(stagedBinary);
+    for (const rpath of macosRpaths(stagedBinary)) {
+      execFileSync("install_name_tool", ["-delete_rpath", rpath, stagedBinary]);
+    }
+    execFileSync("install_name_tool", ["-add_rpath", "@loader_path", stagedBinary]);
+    assertPortableMacosRpaths(stagedBinary);
   }
 } else {
   const whisperCli = process.env.WHISPER_CLI_PATH;

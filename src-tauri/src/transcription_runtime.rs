@@ -19,6 +19,56 @@ pub(crate) fn terminal_outcome(success: bool, cancelled: bool) -> &'static str {
     }
 }
 
+pub(crate) fn sanitize_diagnostic_message(message: &str) -> String {
+    let mut output = Vec::new();
+    let mut redact_continuation = false;
+
+    for token in message.split_whitespace() {
+        if let Some((key, _)) = token.split_once('=') {
+            if !key.is_empty()
+                && key
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_')
+            {
+                redact_continuation = false;
+                if key.to_ascii_lowercase().contains("path")
+                    || key.eq_ignore_ascii_case("args")
+                    || key.eq_ignore_ascii_case("command")
+                {
+                    output.push(format!("{key}=[redacted]"));
+                    redact_continuation = true;
+                    continue;
+                }
+            }
+        }
+
+        if redact_continuation {
+            continue;
+        }
+
+        let is_absolute_path = token.starts_with('/')
+            || token.contains("/Users/")
+            || token.contains("/private/")
+            || token.contains("/Library/")
+            || token
+                .as_bytes()
+                .get(0..3)
+                .is_some_and(|prefix| {
+                    prefix[0].is_ascii_alphabetic()
+                        && prefix[1] == b':'
+                        && matches!(prefix[2], b'/' | b'\\')
+                });
+        if is_absolute_path {
+            output.push("[local path redacted]".to_string());
+            redact_continuation = true;
+        } else {
+            output.push(token.to_string());
+        }
+    }
+
+    output.join(" ")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProductionC0DiagnosticEvent {
@@ -55,7 +105,10 @@ impl ProductionC0DiagnosticSink {
         }
     }
 
-    pub(crate) fn emit(&self, event: ProductionC0DiagnosticEvent) {
+    pub(crate) fn emit(&self, mut event: ProductionC0DiagnosticEvent) {
+        if let Some(message) = event.error_message.as_mut() {
+            *message = sanitize_diagnostic_message(message);
+        }
         let Ok(line) = serde_json::to_vec(&event) else {
             return;
         };
@@ -236,5 +289,29 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("parsedWordCount"));
         assert!(!json.contains("text"));
+    }
+
+    #[test]
+    fn diagnostic_messages_redact_local_paths_and_path_arguments() {
+        let message = sanitize_diagnostic_message(
+            "stage=ffmpeg path=/Users/alice/Private Audio/input.wav error=process failed",
+        );
+        assert_eq!(
+            message,
+            "stage=ffmpeg path=[redacted] error=process failed"
+        );
+
+        let message = sanitize_diagnostic_message(
+            "stage=launch args=[-f, /Users/alice/Private Audio/input.wav] result=failed",
+        );
+        assert_eq!(message, "stage=launch args=[redacted] result=failed");
+
+        let message = sanitize_diagnostic_message(
+            "error=No such file /Users/alice/Private Audio/input.wav error_kind=NotFound",
+        );
+        assert_eq!(
+            message,
+            "error=No such file [local path redacted] error_kind=NotFound"
+        );
     }
 }

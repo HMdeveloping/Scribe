@@ -1,0 +1,57 @@
+name: Runtime compatibility policy
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "scripts/verify-release-*.mjs"
+      - "scripts/verify-production-build.mjs"
+      - "scripts/stage-runtime-binaries.mjs"
+      - "src-tauri/src/transcription_chunking.rs"
+      - "src-tauri/src/commands/recordings.rs"
+      - "src/hooks/**"
+      - "src/components/RecordingWorkflow.tsx"
+      - "src/microphone-diagnostics.ts"
+      - "tests/frontend/microphone-lifecycle.mjs"
+      - "package.json"
+      - "COMPATIBILITY.md"
+  push:
+    branches:
+      - main
+      - hotfix/v1.0.1-macos-transcription
+    paths:
+      - ".github/workflows/**"
+      - "scripts/verify-release-*.mjs"
+      - "scripts/verify-production-build.mjs"
+      - "scripts/stage-runtime-binaries.mjs"
+      - "src-tauri/src/transcription_chunking.rs"
+      - "src-tauri/src/commands/recordings.rs"
+      - "src/hooks/**"
+      - "src/components/RecordingWorkflow.tsx"
+      - "src/microphone-diagnostics.ts"
+      - "tests/frontend/microphone-lifecycle.mjs"
+      - "package.json"
+      - "COMPATIBILITY.md"
+
+permissions:
+  contents: read
+
+jobs:
+  policy-and-transcription-unit-checks:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify release runtime policy
+        run: node scripts/verify-release-config.mjs
+      - name: Verify model validation, retry and CPU fallback behavior
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - name: Verify microphone interruption recovery and buffered audio
+        run: npm run test:microphone
+      - name: Build and scan production frontend
+        run: npm run build
+      - name: Verify production UI and automatic fallback policy
+        run: node scripts/verify-production-build.mjs --frontend dist
